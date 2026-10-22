@@ -48,6 +48,7 @@ final class Recs {
         String title, backdrop, meta = "", app, pkg;
         String link;            // opens the title in its app (looked up with Watchmode), or null: the app's home
         boolean detailed;
+        String plexKey, image;  // a title from your Plex server: its rating key, and the full address of its backdrop
     }
 
     interface Listener { void onRecs(); }
@@ -59,7 +60,9 @@ final class Recs {
     private static final int ANIMATION = 16;
     private static final long LIST_EVERY = 6 * 3600_000L;
     /** Bump when what is saved for each title changes (the saved list is discarded and fetched again). */
-    private static final int CACHE_VERSION = 3;
+    private static final int CACHE_VERSION = 4;
+    private static final String PLEX_PKG = "com.plexapp.android";
+    private static final int PLEX_MAX = 12;
     private static final int MANHA = 0, TARDE = 1, NOITE = 2;
     static final String[] PERIOD_LABEL = {"PARA ESTA MANHÃ", "PARA ESTA TARDE", "PARA ESTA NOITE"};
     static final String[] PERIOD_LABEL_RU = {"ЭТИМ УТРОМ", "СЕГОДНЯ ДНЁМ", "СЕГОДНЯ ВЕЧЕРОМ"};
@@ -99,6 +102,7 @@ final class Recs {
         SERVICE_NAME.put("okko", "Okko");
         SERVICE_NAME.put("crunchyroll", "Crunchyroll");
         SERVICE_NAME.put("oneplay", "Oneplay");
+        SERVICE_NAME.put("plex", "Plex");
     }
     /** Country for "what streams where" (config.properties "tmdb_region", e.g. US, GB, BR). */
     private static final String REGION = Config.TMDB_REGION.trim().toUpperCase(Locale.ROOT);
@@ -378,7 +382,7 @@ final class Recs {
 
     /** Movies and shows are numbered separately on TMDB: a pick is identified by type + number. */
     static String key(Pick p) {
-        return p.kind + ":" + p.id;
+        return p.plexKey != null ? "plex:" + p.plexKey : p.kind + ":" + p.id;
     }
 
     private void notifyListeners() {
@@ -433,10 +437,109 @@ final class Recs {
         alternate(list, seen, hotMovies, hotShows, 24);
         alternate(list, seen, newMovies, newShows, 24);
         if (list.isEmpty()) throw new IOException("TMDB returned no recommendations");
+        // 3. Unwatched titles from your own Plex server, one in between each of the above. Plex being down or its token
+        //    refused only means no Plex titles: the rest of the list is unaffected.
+        if (plexOn() && installed(PLEX_PKG)) {
+            try {
+                List<Pick> plex = fetchPlex();
+                List<Pick> mixed = new ArrayList<>();
+                for (int i = 0; i < Math.max(list.size(), plex.size()); i++) {
+                    if (i < list.size()) mixed.add(list.get(i));
+                    if (i < plex.size()) mixed.add(plex.get(i));
+                }
+                list = mixed;
+            } catch (Exception e) {
+                AppLog.w("plex: " + (e.getMessage() == null ? e.toString() : e.getMessage()));
+            }
+        }
         picks = list;
         period = p;
         listAt = System.currentTimeMillis();
         listLanguage = Ui.language;
+    }
+
+    // MARK: - Plex (your own server: its newest unwatched movies and shows; the token only travels as a header)
+
+    private static boolean plexOn() {
+        return !Config.PLEX_URL.trim().isEmpty() && !Config.PLEX_TOKEN.trim().isEmpty();
+    }
+
+    private static String plexBase() {
+        String base = Config.PLEX_URL.trim();
+        return base.endsWith("/") ? base.substring(0, base.length() - 1) : base;
+    }
+
+    private static JSONObject plexGet(String path) throws IOException, org.json.JSONException {
+        HttpURLConnection c = (HttpURLConnection) new URL(plexBase() + path).openConnection();
+        c.setConnectTimeout(4000);
+        c.setReadTimeout(8000);
+        c.setRequestProperty("Accept", "application/json");
+        c.setRequestProperty("X-Plex-Token", Config.PLEX_TOKEN.trim());
+        try {
+            int code = c.getResponseCode();
+            if (code == 401) throw new IOException("Plex rejected the token");
+            if (code != 200) throw new IOException("Plex returned HTTP " + code);
+            return new JSONObject(read(c.getInputStream())).getJSONObject("MediaContainer");
+        } finally {
+            c.disconnect();
+        }
+    }
+
+    /** The newest unwatched movies and shows of the server's libraries, alternating, up to PLEX_MAX. */
+    private List<Pick> fetchPlex() throws Exception {
+        String machine = plexGet("/identity").getString("machineIdentifier");
+        List<Pick> movies = new ArrayList<>(), shows = new ArrayList<>();
+        JSONArray sections = plexGet("/library/sections").optJSONArray("Directory");
+        for (int i = 0; sections != null && i < sections.length(); i++) {
+            JSONObject section = sections.getJSONObject(i);
+            String type = section.optString("type");
+            if (!type.equals("movie") && !type.equals("show")) continue;
+            boolean movie = type.equals("movie");
+            JSONArray items = plexGet("/library/sections/" + section.getString("key") + "/all?type=" + (movie ? 1 : 2)
+                    + "&unwatched=1&sort=addedAt:desc&X-Plex-Container-Start=0&X-Plex-Container-Size=20").optJSONArray("Metadata");
+            for (int j = 0; items != null && j < items.length(); j++) {
+                Pick p = plexPick(items.getJSONObject(j), movie ? "movie" : "tv", machine);
+                if (p != null) (movie ? movies : shows).add(p);
+            }
+        }
+        List<Pick> out = new ArrayList<>();
+        alternate(out, new HashSet<>(), movies, shows, PLEX_MAX);
+        return out;
+    }
+
+    private static Pick plexPick(JSONObject o, String kind, String machine) throws Exception {
+        String art = o.optString("art", ""), rating = o.optString("ratingKey", "");
+        if (art.isEmpty() || rating.isEmpty()) return null;
+        JSONArray genres = o.optJSONArray("Genre");
+        String genre = genres != null && genres.length() > 0 ? genres.getJSONObject(0).optString("tag") : "";
+        if (Config.HIDE_ANIMATION && genre.equals("Animation")) return null;
+        Pick p = new Pick();
+        p.id = o.optInt("ratingKey");
+        p.kind = kind;
+        p.title = o.optString("title");
+        p.plexKey = rating;
+        p.backdrop = "plex" + rating + "-" + Integer.toHexString(art.hashCode()) + ".jpg";
+        p.image = plexBase() + "/photo/:/transcode?width=" + Backdrop.W + "&height=" + Backdrop.H + "&minSize=1&upscale=1&url="
+                + URLEncoder.encode(art, "UTF-8");
+        p.link = "plex://preplay/?metadataKey=" + URLEncoder.encode("/library/metadata/" + rating, "UTF-8")
+                + "&metadataType=" + (kind.equals("movie") ? 1 : 2) + "&server=" + URLEncoder.encode(machine, "UTF-8");
+        p.app = "plex";
+        p.pkg = PLEX_PKG;
+        List<String> parts = new ArrayList<>();
+        if (kind.equals("tv")) parts.add(Ui.tr("Série", "Series"));
+        if (!genre.isEmpty()) parts.add(genre);
+        if (kind.equals("movie")) {
+            int m = o.optInt("duration") / 60_000;
+            if (m > 0) parts.add(Ui.tr(m >= 60 ? (m / 60) + " h " + (m % 60) + " min" : m + " min",
+                    m >= 60 ? (m / 60) + "h " + (m % 60) + "m" : m + "m"));
+        } else {
+            int n = o.optInt("childCount");
+            if (n > 0) parts.add(Ui.tr(n == 1 ? "1 temporada" : n + " temporadas", n == 1 ? "1 season" : n + " seasons"));
+        }
+        parts.add("Plex");
+        p.meta = String.join(" · ", parts);
+        p.detailed = true;
+        return p;
     }
 
     /** Language of titles and genres; the services come from the region. */
@@ -600,6 +703,7 @@ final class Recs {
 
     private long sourceStamp() {
         long stamp = (Config.TMDB_KEY.hashCode() * 31L + REGION.hashCode()) * 31L + (Config.HIDE_ANIMATION ? 1 : 0);
+        stamp = stamp * 31L + (plexOn() ? (Config.PLEX_URL + Config.PLEX_TOKEN).hashCode() : 0);
         for (String[] service : SERVICES) stamp = stamp * 31L + (installed(service[2]) ? service[2].hashCode() : 0);
         return stamp;
     }
@@ -704,9 +808,10 @@ final class Recs {
         //noinspection ResultOfMethodCallIgnored
         f.getParentFile().mkdirs();
         File part = new File(f.getPath() + ".part");
-        HttpURLConnection c = (HttpURLConnection) new URL(IMAGES + p.backdrop).openConnection();
+        HttpURLConnection c = (HttpURLConnection) new URL(p.image != null ? p.image : IMAGES + p.backdrop).openConnection();
         c.setConnectTimeout(8000);
         c.setReadTimeout(20000);
+        if (p.image != null) c.setRequestProperty("X-Plex-Token", Config.PLEX_TOKEN.trim());
         try (InputStream in = c.getInputStream(); FileOutputStream out = new FileOutputStream(part)) {
             byte[] buffer = new byte[16384];
             int n;
@@ -788,7 +893,8 @@ final class Recs {
             for (Pick p : picks) {
                 a.put(new JSONObject().put("id", p.id).put("kind", p.kind).put("title", p.title).put("backdrop", p.backdrop).put("link", p.link == null ? "" : p.link)
                         .put("meta", p.meta).put("app", p.app == null ? "" : p.app).put("pkg", p.pkg == null ? "" : p.pkg)
-                        .put("detailed", p.detailed));
+                        .put("detailed", p.detailed).put("plexKey", p.plexKey == null ? "" : p.plexKey)
+                        .put("image", p.image == null ? "" : p.image));
             }
             SharedPreferences.Editor e = cache.edit().putString("picks", a.toString()).putInt("period", period).putLong("listAt", listAt)
                     .putString("language", listLanguage)
@@ -817,6 +923,8 @@ final class Recs {
             p.app = o.optString("app").isEmpty() ? null : o.optString("app");
             p.pkg = o.optString("pkg").isEmpty() ? null : o.optString("pkg");
             p.detailed = o.optBoolean("detailed");
+            p.plexKey = o.optString("plexKey").isEmpty() ? null : o.optString("plexKey");
+            p.image = o.optString("image").isEmpty() ? null : o.optString("image");
             out.add(p);
         }
         return out;
