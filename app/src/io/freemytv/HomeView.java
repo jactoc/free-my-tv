@@ -97,12 +97,15 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     // The tab bar is a 68 px capsule; the cards sit on the 5-column grid (the wide one spans 3).
     // No greeting in this fork: the tabs sit at the top, in line with the round buttons (L_BUTTON_CY), and what's below
     // starts 90 px higher than in the original, with bigger cards.
-    private static final float L_TABBAR_TOP = 69, L_TABBAR_H = 68, L_CARDS_TOP = 226, L_CARD_H = 560;
-    private static final float L_FILTER_CY = 178;       // the All / Movies / Shows control
+    private static final float L_TABBAR_TOP = 69, L_TABBAR_H = 68, L_CARDS_TOP = 240, L_CARD_H = 560;
+    private static final float L_FILTER_CY = 184;       // the All / Movies / Shows control
     private static final float L_TALL_W = 340, L_CARD_GAP = 40, L_BUTTON = 68, L_BUTTON_GAP = 20, L_BUTTON_CY = 103;
     private static final float L_PLATTER_TOP = 814, L_TILE_H = 150;
     /** Where the apps' tops are (virtual px): peeking from the bottom edge, and in the Apps tab under the tab bar. */
-    private static final float APPS_GRID_TOP = 236;     // the Apps tab's grid, under the tabs
+    /** tvOS's safe area (Apple's HIG): primary content 60 px from the top and bottom, 80 from the sides (MARGIN). */
+    private static final float SAFE_BOTTOM = 1020;
+    private static final float APPS_W = 320, APPS_H = 180, APPS_ROW = 290;  // 5 x 320 + 4 x 40 = the 1760 px of content
+    private static final float APPS_GRID_TOP = 240;     // the Apps tab's grid, under the tabs, level with the other tabs' content
     private static final float L_DATE_BASE = 330, L_CLOCK_BASE = 540, L_WEATHER_BASE = 626, L_QUOTES_BASE = 694;
     private static final int L_INK = 0xFF1D1D1F, L_DIM = 0xFF6E6E73, L_FAINT = 0xFF8E8E93;
     private static final String[] TABS = {"Início", "Descobrir", "Categorias", "Apps"};
@@ -116,12 +119,12 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
      */
     private static final int TABS_N = 4, TAB_HOME = 0, TAB_DISCOVER = 1, TAB_BROWSE = 2, TAB_APPS = 3;
     // Home: one row of landscape cards under the tabs, the shelf of apps below it.
-    private static final float H_LABEL = 192, H_TOP = 222, H_W = 640, H_H = 360, H_GAP = 32;
+    private static final float H_LABEL = 192, H_TOP = 232, H_W = 720, H_H = 405, H_GAP = 32;
     private static final int H_VISIBLE = 2;
     private static final int HOME_UP_NEXT = 0, HOME_NEW = 1, HOME_TRENDING = 2;
     // Discover: the carousel, and New on Plex a page further down; the cards layer slides up by D_PAGE to show it, and
     // what goes up passes under an edge just below the filter (D_CLIP).
-    private static final float D_PAGE = 760, D_LABEL2 = 250 + D_PAGE, D_TOP2 = 272 + D_PAGE, D_CLIP = 206;
+    private static final float D_PAGE = 760, D_LABEL2 = 252 + D_PAGE, D_TOP2 = 300 + D_PAGE, D_CLIP = 212;
     private static final int Z_TOP = 4, Z_CARDS = 5, Z_FILTER = 10;     // Z_FILTER: All / Movies / Shows in Browse
     private static final int Z_APPS = 12;       // the Apps tab's grid
 
@@ -201,7 +204,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private final RectF[] otherRects = new RectF[MAX_CARDS];     // the row that isn't focused (cardRects: the focused one)
     private final Rect cardsClip = new Rect();
     private final RectF homeCell = new RectF();
-    private Paint lSection;
+    private Paint lSection, lTopTab, lTopTabOn;
     private final RectF[] cardRects = new RectF[MAX_CARDS];
     // The detail screen of a pick (OK on a card): poster, description and the button that opens it in its app.
     private final Spring detail = new Spring(0.34f, 0.9f, 0);
@@ -684,12 +687,15 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         for (Paint p : new Paint[] {labelPaint, titlePaint, metaPaint, clockPaint}) p.setShadowLayer(22 * k, 0, 2 * k, 0x59000000);
         lTitle = Ui.text(Ui.displaySemibold, 76 * k, L_INK);
         lTitle.setLetterSpacing(0.004f);
-        lTab = Ui.text(Ui.medium, 30 * k, L_DIM);
-        lTabOn = Ui.text(Ui.semibold, 30 * k, L_INK);
-        lCardTitle = Ui.text(Ui.semibold, 31 * k, L_INK);
-        lCardTitle.setLetterSpacing(0.012f);
-        lCardMeta = Ui.text(Ui.medium, 25 * k, L_DIM);
-        lSection = Ui.text(Ui.semibold, 27 * k, L_INK);
+        // The sizes are tvOS's text styles (Apple's HIG, at 1080p one point is one virtual px), each with its tracking:
+        // the tabs Headline (38), section titles and card titles Callout (31), the filter Body (29), details Caption 1 (25).
+        lTab = Ui.tracked(Ui.text(Ui.medium, 29 * k, L_DIM), 29);
+        lTabOn = Ui.tracked(Ui.text(Ui.semibold, 29 * k, L_INK), 29);
+        lTopTab = Ui.tracked(Ui.text(Ui.medium, 38 * k, L_DIM), 38);
+        lTopTabOn = Ui.tracked(Ui.text(Ui.semibold, 38 * k, L_INK), 38);
+        lCardTitle = Ui.tracked(Ui.text(Ui.semibold, 31 * k, L_INK), 31);
+        lCardMeta = Ui.tracked(Ui.text(Ui.medium, 25 * k, L_DIM), 25);
+        lSection = Ui.tracked(Ui.text(Ui.semibold, 31 * k, L_INK), 31);
         spinPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
         spinPaint.setStyle(Paint.Style.STROKE);
         spinPaint.setStrokeCap(Paint.Cap.ROUND);
@@ -1096,6 +1102,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         lTitle.setColor(tone(L_INK, WHITE));
         lTab.setColor(tone(L_DIM, 0xFF8E8E93));
         lTabOn.setColor(tone(L_INK, WHITE));
+        lTopTab.setColor(tone(L_DIM, 0xFF8E8E93));
+        lTopTabOn.setColor(tone(L_INK, WHITE));
         lCardTitle.setColor(tone(L_INK, WHITE));
         lCardMeta.setColor(tone(L_DIM, 0xFF98989D));
         lSection.setColor(tone(L_INK, WHITE));
@@ -2178,7 +2186,9 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
 
     private void drawSheet(Canvas c) {
         boolean page = appsPage() && !sheetOpen && sheet.value < 0.001f;      // the Apps tab: under the tabs, cards as on the shelf
-        float shift = scroll.value * GRID_ROW * k;
+        // The Apps tab spans the content margins, and its rows sit further apart so each label reads with its card.
+        float gw = page ? APPS_W : GRID_W, gh = page ? APPS_H : GRID_H, gap = GRID_GAP, row = page ? APPS_ROW : GRID_ROW;
+        float shift = scroll.value * row * k;
         if (page) {
             applyTone();
             c.save();
@@ -2191,18 +2201,18 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         if (gridLabels == null || gridLabels.length != n) {
             gridLabels = new String[n];
             for (int i = 0; i < n; i++) {
-                gridLabels[i] = TextUtils.ellipsize(others.get(i).label, gridLabel, (GRID_W - 10) * k, TextUtils.TruncateAt.END).toString();
+                gridLabels[i] = TextUtils.ellipsize(others.get(i).label, gridLabel, (gw - 10) * k, TextUtils.TruncateAt.END).toString();
             }
         }
-        float gridWidth = COLUMNS * GRID_W + (COLUMNS - 1) * GRID_GAP;
+        float gridWidth = COLUMNS * gw + (COLUMNS - 1) * gap;
         float left = (1920 - gridWidth) / 2 * k;
         float gridTop = (page ? APPS_GRID_TOP : GRID_TOP) * k;
         for (int i = 0; i < n; i++) {
             int r = i / COLUMNS, col = i % COLUMNS;
-            float y = gridTop + r * GRID_ROW * k - shift;
-            if (y > h || y + GRID_ROW * k < 0) continue;
-            float x = left + col * (GRID_W + GRID_GAP) * k;
-            gridCell.set(x, y, x + GRID_W * k, y + GRID_H * k);
+            float y = gridTop + r * row * k - shift;
+            if (y > h || y + row * k < 0) continue;
+            float x = left + col * (gw + gap) * k;
+            gridCell.set(x, y, x + gw * k, y + gh * k);
             float f = gridFocus[i].value;
             if (page || sheetSaved != null) drawAppCard(c, others.get(i), gridCell, f);
             else drawCard(c, others.get(i).tile, gridCell, GRID_RADIUS * k, f, 0.08f);
@@ -2249,6 +2259,10 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             tileFill.setShader(g);
             c.drawRoundRect(cell, r, r, tileFill);
             tileFill.setShader(null);
+            if (night > 0.001f && android.graphics.Color.luminance(style[0]) > 0.6f) {     // a white card, softened so it doesn't glow (HIG)
+                tileFill.setColor(Ui.alpha(0xFF000000, 0.16f * night * (1 - fc)));
+                c.drawRoundRect(cell, r, r, tileFill);
+            }
             drawLogo(c, it, cell, s, style[2]);
         } else if (it.logo != null) {
             tileFill.setColor(0xFF161618);
@@ -2256,6 +2270,10 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             drawLogo(c, it, cell, s, 0);
         } else if (it.tile != null) {
             roundImage(c, it.tile, cell, r);
+            if (night > 0.001f) {           // an app's own banner, often white: dimmed a little until focused (HIG)
+                tileFill.setColor(Ui.alpha(0xFF000000, 0.14f * night * (1 - fc)));
+                c.drawRoundRect(cell, r, r, tileFill);
+            }
         } else {
             tileFill.setColor(tone(0xFFDADADF, 0xFF2C2C2E));
             c.drawRoundRect(cell, r, r, tileFill);
@@ -3200,9 +3218,9 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         float pad = 26 * k, tabTop = L_TABBAR_TOP * k, tabBottom = (L_TABBAR_TOP + L_TABBAR_H) * k;
         float x = MARGIN * k - pad;
         for (int i = 0; i < TABS_N; i++) {
-            float tw = Math.max(lTabOn.measureText(tabs()[i]), lTab.measureText(tabs()[i]));
+            float tw = Math.max(lTopTabOn.measureText(tabs()[i]), lTopTab.measureText(tabs()[i]));
             topRects[i].set(x, tabTop, x + tw + 2 * pad, tabBottom);
-            x = topRects[i].right + 4 * k;
+            x = topRects[i].right + 16 * k;
         }
         float b = L_BUTTON * k, right = CONTENT_R * k, cy = L_BUTTON_CY * k;
         for (int i = 2; i >= 0; i--) {
@@ -3401,11 +3419,12 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         if (bgTo != null) drawLightImage(c, bgTo, fading ? e : 1);
         imagePaint.setColorFilter(null);
         if (night > 0.001f) {
-            // Dark, as on Apple TV: the focused title's color only as a faint glow at the top, fading to true black
-            // (an OLED's pixels off) by the middle of the screen.
+            // Dark, after Apple's HIG: a dimmed base rather than flat black, with the focused title's color passing
+            // through (a sense of place): a glow at the top that settles into a faint tint, never quite off, so the
+            // dark tiles still sit on something.
             if (darkFade == null) {
-                darkFade = new LinearGradient(0, 0, 0, h * 0.62f, new int[] {0xB8000000, 0xE6000000, 0xFF000000},
-                        new float[] {0, 0.45f, 1}, Shader.TileMode.CLAMP);
+                darkFade = new LinearGradient(0, 0, 0, h, new int[] {0x9A161618, 0xCC161618, 0xE0161618, 0xE8161618},
+                        new float[] {0, 0.4f, 0.7f, 1}, Shader.TileMode.CLAMP);
             }
             fill.setShader(darkFade);
             fill.setAlpha(Math.round(255 * night));
@@ -3427,12 +3446,17 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             if (HomeData.coinCount() > 0) drawQuotes(c);
             return;
         }
-        if (tab == TAB_BROWSE && browseGenre >= 0) c.drawText(browseName, MARGIN * k, 244 * k, lSection);   // the genre, over its grid
         // Text tabs (the selected one in bold, in the main text color); with focus on the tabs, the selected one gets
         // the white pill with a shadow and grows a little (the tvOS focus).
         float focus = Ui.clamp(topFocus[tab].value);
         for (int i = 0; i < TABS_N; i++) {
             RectF r = topRects[i];
+            if (i == tab && focus < 0.99f) {
+                float rr = r.height() / 2;
+                fill.setShader(null);
+                fill.setColor(Ui.alpha(tone(0xFF000000, 0xFFFFFFFF), tone(0.06f, 0.12f) * (1 - focus)));
+                c.drawRoundRect(r, rr, rr, fill);
+            }
             if (i == tab && focus > 0.01f) {
                 float s = 1 + 0.05f * focus;
                 cell.set(r.centerX() - r.width() * s / 2, r.centerY() - r.height() * s / 2,
@@ -3448,11 +3472,14 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                 fill.setColor(Ui.alpha(0xFFFFFFFF, focus));
                 c.drawRoundRect(cell, rr, rr, fill);
             }
-            Paint p = i == tab ? lTabOn : lTab;
-            if (i == tab) lTabOn.setColor(blend(tone(L_INK, WHITE), L_INK, focus));   // always dark on the white pill
+            Paint p = i == tab ? lTopTabOn : lTopTab;
+            if (i == tab) lTopTabOn.setColor(blend(tone(L_INK, WHITE), L_INK, focus));   // always dark on the white pill
             c.drawText(tabs()[i], r.centerX() - p.measureText(tabs()[i]) / 2, r.centerY() + Ui.halfCap(p), p);
         }
         if (tab == TAB_DISCOVER || tab == TAB_BROWSE) drawFilter(c);
+        if (tab == TAB_BROWSE && browseGenre >= 0) {    // the genre that's open, right after the filter, on its row
+            c.drawText(browseName, filterRects[2].right + 40 * k, L_FILTER_CY * k + Ui.halfCap(lTopTabOn), lTopTabOn);
+        }
         if (tab != TAB_BROWSE && tab != TAB_APPS && HomeData.coinCount() > 0) drawQuotes(c);
     }
 
@@ -3935,20 +3962,22 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         bGap = 24 * k;
         bLeft = MARGIN * k;
         float width = CONTENT_R * k - bLeft;
-        bTop = (browseGenre < 0 ? 226 : 282) * k;     // below the tabs and the filter (and in a genre, its name)
+        bTop = 226 * k;                     // below the tabs and the filter
         bClipTop = D_CLIP * k;
         if (browseGenre < 0) {              // the genres: 4 x 4, all in view
             bTileW = (width - (bCols - 1) * bGap) / bCols;
-            bTileH = (1030 * k - bTop - 3 * bGap) / 4;
+            bTileH = (SAFE_BOTTOM * k - bTop - 3 * bGap) / 4;
             bGapX = bGap;
             bVisRows = 4;
             bClipBottom = h;
         } else {                            // a genre's titles: two rows of posters in view, scrolling by rows; the caption sits below
             bVisRows = 2;
-            bTileH = (984 * k - bTop - bGap) / 2;
+            bGap = 32 * k;                  // the posters a little apart, so the focused one has room to grow
+            bGapX = bGap;
+            bTileH = (SAFE_BOTTOM * k - 84 * k - bTop - bGap) / 2;    // two rows, then the title and its details
             bTileW = bTileH / 1.5f;
             bGapX = (width - bCols * bTileW) / (bCols - 1);
-            bClipBottom = 984 * k;
+            bClipBottom = bTop + 2 * bTileH + bGap + 16 * k;    // room for the focused one's growth
         }
     }
 
@@ -4025,8 +4054,9 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         c.restore();
         if (browseGenre >= 0 && cardIndex < n) {
             Recs.Pick p = cards.get(cardIndex);
-            c.drawText(fit(p.title, lCardTitle, 1300 * k, 0), MARGIN * k, 1018 * k, lCardTitle);
-            if (p.meta != null && !p.meta.isEmpty()) c.drawText(fit(p.meta, lCardMeta, 1300 * k, 1), MARGIN * k, 1054 * k, lCardMeta);
+            float base = bTop + 2 * bTileH + bGap + 44 * k;     // as under Discover's cards: 35 px under the art, 36 to the meta
+            c.drawText(fit(p.title, lCardTitle, 1300 * k, 0), MARGIN * k, base, lCardTitle);
+            if (p.meta != null && !p.meta.isEmpty()) c.drawText(fit(p.meta, lCardMeta, 1300 * k, 1), MARGIN * k, base + 36 * k, lCardMeta);
         }
     }
 

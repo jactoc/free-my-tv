@@ -99,6 +99,20 @@ final class Ui {
         return p;
     }
 
+    /** tvOS's tracking for a text size in points (Apple's HIG typography table), in 1/1000 em. */
+    private static final int[][] TRACKING = {{22, -12}, {23, -4}, {24, 3}, {25, 6}, {26, 8}, {27, 11}, {30, 14},
+            {32, 13}, {34, 12}, {35, 11}, {40, 10}, {43, 9}, {48, 8}, {51, 7}, {56, 6}, {58, 5}, {64, 4}, {66, 3},
+            {72, 2}, {76, 1}};
+
+    static Paint tracked(Paint p, float points) {
+        int em = 0;
+        for (int[] t : TRACKING) {
+            if (points <= t[0]) { em = t[1]; break; }
+        }
+        p.setLetterSpacing(em / 1000f);
+        return p;
+    }
+
     /** Fixed-width digits (the clock and the prices don't jitter when a digit changes). */
     static Paint numbers(Typeface face, float size, int color) {
         Paint p = text(face, size, color);

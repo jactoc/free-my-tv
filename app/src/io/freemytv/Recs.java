@@ -350,7 +350,7 @@ final class Recs {
         for (Pick p : picks) {
             if (p.detailed && p.app != null && hasImage(p) && seen.add(franchise(p.title))) out.add(p);
         }
-        return out;
+        return plexFirst(out);
     }
 
     /** The pick's original image if it's already on disk (the screensaver loads it in its own way), or null. */
@@ -417,7 +417,7 @@ final class Recs {
         List<Pick> out = new ArrayList<>();
         if (!hasKey(context)) return out;
         for (Pick p : wanted()) if (p.detailed && p.app != null && (kind == null || kind.equals(p.kind))) out.add(p);
-        return out;
+        return plexFirst(out);
     }
 
     // MARK: - Browse: the genres, then a genre's titles (on your apps and in your Plex library)
@@ -543,6 +543,86 @@ final class Recs {
         synchronized (genreLists) {
             List<Pick> list = genreLists.get(gkey(genre, kind));
             if (list != null) for (Pick p : list) if (!p.detailed || p.pkg != null) out.add(p);
+        }
+        return plexFirst(out);
+    }
+
+    // MARK: - Plex first: a title that's on your server plays from there, whatever streaming app also has it
+
+    private volatile Map<String, String> plexLibrary = new HashMap<>();     // "movie:603" -> its rating key on the server
+    private volatile String plexMachine;
+    private volatile long plexLibraryAt;
+    private volatile boolean plexLibraryLoading;
+    private static final long PLEX_LIBRARY_FOR = 6 * 3600_000L;
+
+    /** Your whole library by TMDB id (only the ids: one light request per library), refreshed every 6 hours. */
+    private void refreshPlexLibrary() {
+        if (plexLibraryLoading || !plexOn() || !installed(PLEX_PKG)) return;
+        long age = System.currentTimeMillis() - plexLibraryAt;
+        if (plexLibraryAt != 0 && age >= 0 && age < PLEX_LIBRARY_FOR) return;
+        plexLibraryLoading = true;
+        io.execute(() -> {
+            try {
+                String machine = plexGet("/identity").getString("machineIdentifier");
+                Map<String, String> library = new HashMap<>();
+                JSONArray sections = plexGet("/library/sections").optJSONArray("Directory");
+                for (int i = 0; sections != null && i < sections.length(); i++) {
+                    JSONObject section = sections.getJSONObject(i);
+                    String type = section.optString("type");
+                    if (!type.equals("movie") && !type.equals("show")) continue;
+                    boolean movie = type.equals("movie");
+                    JSONArray items = plexGet("/library/sections/" + section.getString("key") + "/all?type=" + (movie ? 1 : 2)
+                            + "&includeGuids=1").optJSONArray("Metadata");
+                    for (int j = 0; items != null && j < items.length(); j++) {
+                        JSONObject o = items.getJSONObject(j);
+                        JSONArray guids = o.optJSONArray("Guid");
+                        for (int g = 0; guids != null && g < guids.length(); g++) {
+                            String id = guids.getJSONObject(g).optString("id");
+                            if (id.startsWith("tmdb://")) library.put((movie ? "movie:" : "tv:") + id.substring(7), o.optString("ratingKey"));
+                        }
+                    }
+                }
+                plexMachine = machine;
+                plexLibrary = library;
+                plexLibraryAt = System.currentTimeMillis();
+                notifyListeners();
+            } catch (Exception e) {
+                AppLog.w("plex library: " + (e.getMessage() == null ? e.toString() : e.getMessage()));
+                plexLibraryAt = System.currentTimeMillis() - PLEX_LIBRARY_FOR + 10 * 60_000L;     // try again in 10 minutes
+            } finally {
+                plexLibraryLoading = false;
+            }
+        });
+    }
+
+    /** Turns a streaming title you also have on Plex into the Plex one (its badge, its details, Watch opens Plex). */
+    private void plexFirst(Pick p) {
+        if (p.plexKey != null || "plex".equals(p.app) || plexMachine == null) return;
+        String rating = plexLibrary.get(p.kind + ":" + p.id);
+        if (rating == null || rating.isEmpty()) return;
+        try {
+            p.link = plexPlayLink(plexMachine, rating);
+        } catch (Exception e) {
+            return;
+        }
+        String was = p.app == null ? null : SERVICE_NAME.get(p.app);
+        p.app = "plex";
+        p.pkg = PLEX_PKG;
+        p.tmdb = p.id;
+        String plex = SERVICE_NAME.get("plex");
+        if (p.meta != null && was != null && p.meta.endsWith(was)) p.meta = p.meta.substring(0, p.meta.length() - was.length()) + plex;
+    }
+
+    /** The list with Plex first, a title on both shown once (the server's own entry, when the list has it). */
+    private List<Pick> plexFirst(List<Pick> list) {
+        refreshPlexLibrary();
+        Set<String> own = new HashSet<>();
+        for (Pick p : list) if (p.plexKey != null && p.tmdb > 0) own.add(p.kind + ":" + p.tmdb);
+        List<Pick> out = new ArrayList<>(list.size());
+        for (Pick p : list) {
+            if (p.plexKey == null && own.contains(p.kind + ":" + p.id)) continue;
+            plexFirst(p);
+            out.add(p);
         }
         return out;
     }
@@ -1136,7 +1216,7 @@ final class Recs {
         if (p == null) return null;
         String url = p.still != null ? p.still
                 : p.backdrop != null && !p.backdrop.startsWith("plex") ? "https://image.tmdb.org/t/p/w780" + p.backdrop : null;
-        return small(p, "s:", url, 672, 378);     // Home's card, focused (1.05×)
+        return small(p, "s:", url, 756, 425);     // Home's card, focused (1.05×)
     }
 
     private Bitmap small(Pick p, String type, String url, int w, int h) {
@@ -1547,6 +1627,7 @@ final class Recs {
             p.app = chosen[1];
             p.pkg = onTv ? chosen[2] : null;    // null: not on this TV (the detail screen's Watch button is off)
         }
+        plexFirst(p);                           // on your Plex too: Plex wins
         if (p.app != null) parts.add(SERVICE_NAME.get(p.app));
         p.meta = String.join(" · ", parts);
         p.detailed = true;
