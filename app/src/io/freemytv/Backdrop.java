@@ -35,7 +35,7 @@ final class Backdrop {
         return longest > 0 ? Math.min(1f, longest / 1920f) : 1f;
     }
 
-    private static int ui(int px) {
+    static int ui(int px) {
         return Math.round(px * UI_SCALE);
     }
     final Bitmap image;

@@ -345,6 +345,11 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             this.kind = kind;
         }
 
+        /** "⌄ Apps" fades on every frame of the scroll; its chevron and word never overlap, so no offscreen copy. */
+        @Override public boolean hasOverlappingRendering() {
+            return kind != PEEK;
+        }
+
         @Override protected void onDraw(Canvas c) {
             if (labelPaint == null) return;
             c.translate(-getLeft(), -getTop());

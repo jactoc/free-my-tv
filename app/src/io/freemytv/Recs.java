@@ -951,14 +951,8 @@ final class Recs {
                 File dir = new File(context.getCacheDir(), "recs");
                 File f = genre ? imageFile(p) : new File(dir, "poster-" + key(p).replace(":", "-") + ".jpg");
                 if (!f.exists()) fetch(url, f);
-                BitmapFactory.Options bounds = new BitmapFactory.Options();
-                bounds.inJustDecodeBounds = true;
-                BitmapFactory.decodeFile(f.getPath(), bounds);
-                BitmapFactory.Options opts = new BitmapFactory.Options();
-                int want = genre ? 640 : 320;
-                while (bounds.outWidth / (opts.inSampleSize + 1) >= want * 2) opts.inSampleSize++;
-                Bitmap b = BitmapFactory.decodeFile(f.getPath(), opts);
-                if (b == null) throw new IOException("unreadable image");
+                // The focused tile's size (1.07×): a genre strip of about 452×173, a poster of about 231×347.
+                Bitmap b = genre ? decodeCover(f, Backdrop.ui(460), Backdrop.ui(180)) : decodeCover(f, Backdrop.ui(240), Backdrop.ui(360));
                 synchronized (tiles) { tiles.put(key, b); }
                 ok = true;
             } catch (IOException | RuntimeException | OutOfMemoryError e) {
@@ -972,6 +966,39 @@ final class Recs {
             }
         });
         return null;
+    }
+
+    /**
+     * The image at the smallest size that still covers w×h: a power-of-two subsample, then a filtered scale for the
+     * rest. A full-size poster is 3 to 6 MB in memory; at its drawn size, a tenth of that.
+     */
+    private static Bitmap decodeCover(File f, int w, int h) throws IOException {
+        BitmapFactory.Options bounds = new BitmapFactory.Options();
+        bounds.inJustDecodeBounds = true;
+        BitmapFactory.decodeFile(f.getPath(), bounds);
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) throw new IOException("unreadable image");
+        BitmapFactory.Options opts = new BitmapFactory.Options();
+        opts.inSampleSize = 1;
+        while (bounds.outWidth / (opts.inSampleSize * 2) >= w && bounds.outHeight / (opts.inSampleSize * 2) >= h) opts.inSampleSize *= 2;
+        Bitmap b = BitmapFactory.decodeFile(f.getPath(), opts);
+        if (b == null) throw new IOException("unreadable image");
+        float scale = Math.max((float) w / b.getWidth(), (float) h / b.getHeight());
+        if (scale > 0.87f) return b;        // close enough: not worth a second copy
+        Bitmap small = Bitmap.createScaledBitmap(b, Math.round(b.getWidth() * scale), Math.round(b.getHeight() * scale), true);
+        if (small != b) b.recycle();
+        return small;
+    }
+
+    /** Browse's tiles and the detail screen's posters, when the home screen is hidden: they come back from the disk. */
+    void dropImages() {
+        synchronized (tiles) {
+            tiles.clear();
+            tileFailed.clear();         // a network blip doesn't leave a tile gray for good
+        }
+        synchronized (posters) {
+            posters.clear();
+            posterFailed.clear();
+        }
     }
 
     // MARK: - Posters (the detail screen: one at a time, from TMDB or your Plex server)
@@ -999,13 +1026,7 @@ final class Recs {
                     fetch(p.poster, f);
                     prune(dir);
                 }
-                BitmapFactory.Options bounds = new BitmapFactory.Options();
-                bounds.inJustDecodeBounds = true;
-                BitmapFactory.decodeFile(f.getPath(), bounds);
-                BitmapFactory.Options opts = new BitmapFactory.Options();
-                while (bounds.outHeight / (opts.inSampleSize + 1) >= 1440) opts.inSampleSize++;
-                Bitmap b = BitmapFactory.decodeFile(f.getPath(), opts);
-                if (b == null) throw new IOException("unreadable poster");
+                Bitmap b = decodeCover(f, Backdrop.ui(480), Backdrop.ui(720));     // drawn at 480×720
                 synchronized (posters) {
                     posters.put(key, b);
                     while (posters.size() > 3) posters.remove(posters.keySet().iterator().next());

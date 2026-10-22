@@ -99,10 +99,12 @@
             </intent-filter>
         </activity>
 
-        <!-- A trailer in YouTube's embedded player, inside this app: Back returns to the title's page. -->
+        <!-- A trailer in YouTube's embedded player, inside this app: Back returns to the title's page. Its own process
+             (:trailer): the WebView's memory leaves with it instead of staying in the home screen, and a WebView crash
+             can't take the home screen down. -->
         <activity
             android:name=".TrailerActivity"
-            android:process=":home"
+            android:process=":trailer"
             android:exported="false"
             android:excludeFromRecents="true"
             android:screenOrientation="landscape"

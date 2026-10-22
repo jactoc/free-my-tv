@@ -69,7 +69,12 @@ public class HomeActivity extends Activity {
 
     @Override public void onTrimMemory(int level) {
         super.onTrimMemory(level);
-        if (level >= TRIM_MEMORY_COMPLETE) Recs.get(this).trim();
+        // Hidden (an app is playing): give its memory back. Browse's and the detail screen's images reload from disk in a
+        // moment; the carousel's stay, unless the system is short of memory.
+        // A bitmap's pixels are freed when it's collected, and a hidden home screen barely allocates: collect now.
+        if (level >= TRIM_MEMORY_UI_HIDDEN) Recs.get(this).dropImages();
+        if (level >= TRIM_MEMORY_BACKGROUND) Recs.get(this).trim();
+        if (level >= TRIM_MEMORY_UI_HIDDEN) Runtime.getRuntime().gc();
     }
 
     @Override public boolean dispatchKeyEvent(KeyEvent event) {
