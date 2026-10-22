@@ -71,6 +71,7 @@ final class HomeApps {
         float logoInk;      // fraction of the logo with ink (thin logos are drawn larger, with the same "weight")
         float logoScale = 1; // size tweak by eye (compact logos need more)
         boolean connected = true;
+        boolean freshTask;  // opens in a task of its own: Back from it returns to where it was opened (the trailer), not to the app's home
     }
 
     /**
@@ -395,6 +396,7 @@ final class HomeApps {
         }
         if (intent == null) return false;
         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        if (it.freshTask) intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TASK);
         try {
             a.startActivity(intent, ActivityOptions.makeScaleUpAnimation(from, x, y, Math.max(w, 1), Math.max(h, 1)).toBundle());
             return true;

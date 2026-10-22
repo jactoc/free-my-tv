@@ -466,6 +466,11 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         zone = Z_SHELF;
         shelfIndex = 0;
         sheetOpen = false;
+        if (detailOpen) {
+            detailOpen = false;
+            if (animated) detail.target = 0;
+            else detail.snap(0);
+        }
         drawerOpen = false;
         if (animated) {
             sheet.target = 0;
@@ -1869,6 +1874,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         String url = p.trailer != null ? "https://www.youtube.com/watch?v=" + p.trailer
                 : "https://www.youtube.com/results?search_query=" + android.net.Uri.encode(p.title + " " + p.year + " trailer");
         HomeApps.Item it = HomeApps.app("com.google.android.youtube.tv", "YouTube", url);
+        it.freshTask = true;    // Back from the trailer comes back here, not to YouTube's home
         RectF r = detailButtons[1];
         boolean opened = HomeApps.open(activity, it, this, Math.round(r.left), Math.round(r.top), Math.round(r.width()), Math.round(r.height()));
         if (!opened) showToast(Ui.tr("Não deu para abrir o YouTube.", "Couldn't open YouTube."));
