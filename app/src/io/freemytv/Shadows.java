@@ -30,6 +30,14 @@ final class Shadows {
             c.drawRoundRect(shape, r, r, paint);
             return;
         }
+        drawCached(c, shape, r, blur, paint);
+    }
+
+    /**
+     * The same shadow from the cached bitmap, whatever the Android version: for shapes that change size on every
+     * frame (the carousel's cards) a live blur costs the GPU far more than a few stretched slices of a bitmap.
+     */
+    void drawCached(Canvas c, RectF shape, float r, float blur, Paint paint) {
         int radius = Math.max(0, Math.round(r)), b = Math.max(1, Math.round(blur));
         int m = (int) Math.ceil(b * 1.8f) + 1;        // how far the blur spreads outside the shape
         int corner = radius + 2 * m;                  // the slice that holds the curve and the blur on both sides of it

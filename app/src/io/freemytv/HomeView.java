@@ -156,7 +156,6 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private Paint dTitle, dMeta, dBody, dButton, dHint;
     private TextPaint dBodyPaint;
     private final Path playTriangle = new Path();
-    private final Rect srcRect = new Rect();
     private final List<HomeApps.Item> lightButtons = new ArrayList<>();
     private Paint lTitle, lTab, lTabOn, lCardTitle, lCardMeta, lQuote, lTip, lDate, lClock, lWeather, lClockQuote;
     private Shader lightGradient;
@@ -2805,11 +2804,29 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
 
     /** The photos around the focused card are made ready (a few ahead: scrolling never shows a gray card) and its photo becomes the background. */
     private void focusCard() {
+        focusCard(true);
+    }
+
+    /**
+     * `settled` false while the focus is moving along the row: the background (whose cross-fade also redraws the glass
+     * shelf, the most expensive thing on screen) then waits for the focus to rest on a card for a moment.
+     */
+    private void focusCard(boolean settled) {
         for (int i = Math.max(0, cardIndex - 1); i < Math.min(cards.size(), cardIndex + 7); i++) recs.backdrop(cards.get(i));
-        Backdrop b = cards.isEmpty() ? null : recs.backdrop(cards.get(Math.min(cardIndex, cards.size() - 1)));
-        if (cards.isEmpty() || b != null) showBackdrop(b);
+        handler.removeCallbacks(backgroundFollows);
+        if (settled) backgroundFollows.run();
+        else handler.postDelayed(backgroundFollows, 500);
         heroDirty = true;
     }
+
+    private final Runnable backgroundFollows = new Runnable() {
+        @Override public void run() {
+            Backdrop b = cards.isEmpty() ? null : recs.backdrop(cards.get(Math.min(cardIndex, cards.size() - 1)));
+            if (cards.isEmpty() || b != null) showBackdrop(b);
+            heroDirty = true;
+            wake();
+        }
+    };
 
     private void selectTab(int index) {
         if (index == tab) return;
@@ -2950,7 +2967,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         tmp.set(-bw / 2, -bh / 2, bw / 2, bh / 2);
         tmp.offset(0, (10 + 14 * f) * k);
         shadowDeep.setColor(Ui.alpha(0xFF000000, tone(0.14f, 0.32f) + tone(0.2f, 0.28f) * f));
-        shadows.draw(c, tmp, r0, DEEP_BLUR * k, shadowDeep);
+        shadows.drawCached(c, tmp, r0, DEEP_BLUR * k, shadowDeep);     // cached slices: the live blur is dear for shapes that resize each frame
         c.restore();
         Backdrop b = p == null ? null : recs.backdrop(p);
         Bitmap img = b == null ? null : b.wide;     // the tall cards are a centered crop of it, so the crop animates smoothly
@@ -2987,14 +3004,33 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             c.restore();
         }
         if (p == null) return;
-        fitPaint.set(lCardTitle);
-        c.drawText(TextUtils.ellipsize(p.title, fitPaint, bw, TextUtils.TruncateAt.END).toString(), base.left, base.bottom + 46 * k, lCardTitle);
+        c.drawText(fit(p.title, lCardTitle, bw, 0), base.left, base.bottom + 46 * k, lCardTitle);
         if (near > 0.02f && p.meta != null && !p.meta.isEmpty()) {     // the info line fades in as the card grows
-            fitPaint.set(lCardMeta);
             lCardMeta.setAlpha(Math.round(255 * near));
-            c.drawText(TextUtils.ellipsize(p.meta, fitPaint, bw, TextUtils.TruncateAt.END).toString(), base.left, base.bottom + 80 * k, lCardMeta);
+            c.drawText(fit(p.meta, lCardMeta, bw, 1), base.left, base.bottom + 80 * k, lCardMeta);
             lCardMeta.setAlpha(255);
         }
+    }
+
+    /** The text cut to `width` (in 24 px steps, remembered: the cards' widths change on every frame of the animation). */
+    private final HashMap<String, String[][]> fitted = new HashMap<>();
+
+    private String fit(String text, Paint paint, float width, int slot) {
+        int step = Math.max(0, (int) (width / (24 * k)));
+        String[][] row = fitted.get(text);
+        if (row == null) {
+            if (fitted.size() > 400) fitted.clear();
+            row = new String[2][64];
+            fitted.put(text, row);
+        }
+        step = Math.min(step, 63);
+        String out = row[slot][step];
+        if (out == null) {
+            fitPaint.set(paint);
+            out = TextUtils.ellipsize(text, fitPaint, step * 24 * k, TextUtils.TruncateAt.END).toString();
+            row[slot][step] = out;
+        }
+        return out;
     }
 
     /** Draws the image as a centered crop of the cell's shape: the card changes width, the photo is never stretched. */
@@ -3002,16 +3038,6 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         float want = cell.width() / cell.height(), iw = image.getWidth(), ih = image.getHeight();
         float sw = Math.min(iw, ih * want), sh = sw / want;
         int l = Math.round((iw - sw) / 2), t = Math.round((ih - sh) / 2);
-        srcRect.set(l, t, Math.min(image.getWidth(), Math.round(l + sw)), Math.min(image.getHeight(), Math.round(t + sh)));
-        if (!Ui.LEGACY) {
-            clip.reset();
-            clip.addRoundRect(cell, r, r, Path.Direction.CW);
-            c.save();
-            c.clipPath(clip);
-            c.drawBitmap(image, srcRect, cell, bitmapPaint);
-            c.restore();
-            return;
-        }
         BitmapShader shader = imageShaders.get(image);
         if (shader == null) {
             shader = new BitmapShader(image, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP);
@@ -3076,7 +3102,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                     int next = Math.max(0, Math.min(cards.size() - 1, cardIndex + dx));
                     if (next == cardIndex) return true;
                     cardIndex = next;
-                    focusCard();
+                    focusCard(false);
                 } else if (dy < 0) {
                     zone = Z_TOP;
                     topIndex = tab;     // as on Apple TV: moving up to the tabs focuses the selected tab
