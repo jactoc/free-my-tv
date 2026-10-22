@@ -595,6 +595,9 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
 
     @Override public void onRecs() {
         wake();
+        Recs.Pick pending = watchlistPending;
+        if (pending != null && (pending != detailPick || !detailOpen)) watchlistPending = null;     // closed: forget it
+        else if (pending != null && pending.lookedUp) toggleWatchlist();     // found (and its state known), or not found
         detailDirty = true;     // the poster may have just arrived
         browseDirty = true;     // so may a Browse tile
         updatePicks();
@@ -2059,15 +2062,35 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         if (!opened) showToast(Ui.tr("Não deu para abrir o YouTube.", "Couldn't open YouTube."));
     }
 
+    private Recs.Pick watchlistPending;     // Watchlist pressed before the title was found in Plex's catalog
+    private boolean watchlistPendingAdd;    // what that press meant, from the button it showed then
+
     private void toggleWatchlist() {
         Recs.Pick p = detailPick;
         if (p == null) return;
+        boolean pending = watchlistPending == p;
+        final boolean add = pending ? watchlistPendingAdd : p.watchlisted != 1;
         if (p.discoverId == null) {
-            showToast(p.lookingUp ? Ui.tr("Consultando o Plex…", "Checking Plex…")
-                    : Ui.tr("Título não encontrado no Plex", "Not found in Plex's catalog"));
+            if (p.lookedUp) {
+                watchlistPending = null;
+                showToast(Ui.tr("Título não encontrado no Plex", "Not found in Plex's catalog"));
+                return;
+            }
+            // Still finding the title in Plex's catalog: the press is kept and done as soon as it's found (onRecs).
+            watchlistPending = p;
+            watchlistPendingAdd = add;
+            recs.lookup(p);
+            showToast(Ui.tr("Consultando o Plex…", "Checking Plex…"));
             return;
         }
-        final boolean add = p.watchlisted != 1;
+        watchlistPending = null;
+        if (pending && (p.watchlisted == 1) == add) {      // Plex says it's already that way: nothing to change
+            showToast(add ? Ui.tr("Já está na sua lista do Plex", "Already in your Plex watchlist")
+                    : Ui.tr("Não está na sua lista do Plex", "Not in your Plex watchlist"));
+            detailDirty = true;
+            wake();
+            return;
+        }
         recs.watchlist(p, add, ok -> {
             detailDirty = true;
             wake();

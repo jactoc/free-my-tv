@@ -148,6 +148,8 @@ final class Recs {
     private final ExecutorService io = Executors.newSingleThreadExecutor();
     /** The detail screen (poster, trailer, watchlist): its own thread, so it never waits behind the picks' images. */
     private final ExecutorService detailIo = Executors.newSingleThreadExecutor();
+    /** The detail screen's own requests (trailer, Plex catalog id, watchlist): not queued behind the lists' details. */
+    private final ExecutorService lookupIo = Executors.newSingleThreadExecutor();
     private final Handler main = new Handler(Looper.getMainLooper());
     private final List<Listener> listeners = new ArrayList<>();
     private final Map<String, Backdrop> images = new LinkedHashMap<>();   // this hour's, built and ready to draw
@@ -1098,7 +1100,7 @@ final class Recs {
     void lookup(Pick p) {
         if (p == null || p.lookedUp || p.lookingUp) return;
         p.lookingUp = true;
-        detailIo.execute(() -> {
+        lookupIo.execute(() -> {
             try {
                 if (p.plexKey != null && p.tmdb == 0 && p.showKey != null && !p.showKey.isEmpty()) p.tmdb = plexTmdb(p.showKey);
                 int tmdbId = p.plexKey != null ? p.tmdb : p.id;
@@ -1158,7 +1160,7 @@ final class Recs {
 
     /** Adds or removes the title on your Plex watchlist (your plex.tv account's, shared by all your Plex apps). */
     void watchlist(Pick p, boolean add, Consumer<Boolean> done) {
-        detailIo.execute(() -> {
+        lookupIo.execute(() -> {
             boolean ok = false;
             try {
                 plexCloud("PUT", PLEX_DISCOVER + "/actions/" + (add ? "addToWatchlist" : "removeFromWatchlist") + "?ratingKey=" + p.discoverId);
