@@ -494,7 +494,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         lightButtons.clear();
         lightButtons.add(HomeApps.action(HomeApps.LIVE_TV, "live", Ui.tr("TV aberta", "Live TV"), "live_tv"));
         lightButtons.add(HomeApps.action(HomeApps.INPUTS, "inputs", Ui.tr("Entradas HDMI", "HDMI Inputs"), "hdmi"));
-        lightButtons.add(HomeApps.action(HomeApps.SETTINGS, "settings", Ui.tr("Configurações", "Settings"), "settings"));
+        lightButtons.add(HomeApps.action(HomeApps.ANDROID_SETTINGS, "tv-settings", Ui.tr("Configurações", "Settings"), "settings"));
     }
 
     private static String[] tabs() {
@@ -2989,7 +2989,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             if (HomeData.coinCount() > 0) drawQuotes(c);
             return;
         }
-        String hello = Ui.tr("Para você", "For You");
+        String hello = greeting();
         c.drawText(hello, MARGIN * k - Ui.leftBearing(lTitle, hello), L_TITLE_BASE * k, lTitle);
         // Text tabs (the selected one in bold, in the main text color); with focus on the tabs, the selected one gets
         // the white pill with a shadow and grows a little (the tvOS focus).
@@ -3026,6 +3026,25 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         c.restore();
         if (HomeData.coinCount() > 0) drawQuotes(c);
     }
+
+    private String greeting = "";
+    private long greetingMinute = -1;
+
+    /** "Good morning / afternoon / evening", with your name (config.properties "name"): follows the clock and the language. */
+    private String greeting() {
+        long minute = System.currentTimeMillis() / 60_000L;
+        if (minute != greetingMinute || !greetingLanguage.equals(Ui.language)) {
+            greetingMinute = minute;
+            greetingLanguage = Ui.language;
+            int hour = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY);
+            String text = hour < 5 || hour >= 18 ? Ui.tr("Boa noite", "Good evening", "Buenas noches")
+                    : hour < 12 ? Ui.tr("Bom dia", "Good morning", "Buenos días")
+                    : Ui.tr("Boa tarde", "Good afternoon", "Buenas tardes");
+            greeting = Config.NAME.trim().isEmpty() ? text : text + ", " + Config.NAME.trim();
+        }
+        return greeting;
+    }
+    private String greetingLanguage = "";
 
     private boolean picksOn() {
         return Recs.hasKey(getContext());

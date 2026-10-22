@@ -220,7 +220,7 @@ final class HomeApps {
     static List<Item> drawerShortcuts() {
         List<Item> items = new ArrayList<>();
         items.add(shortcut(ALL_APPS, "all", Ui.tr("Todos os Apps", "All Apps"), "apps"));
-        items.add(shortcut(SETTINGS, "settings", Ui.tr("Ajustes do Início", "Home Settings"), "settings"));
+        items.add(shortcut(SETTINGS, "settings", Ui.tr("Ajustes do Launcher", "Launcher Settings"), "settings"));
         items.add(shortcut(ANDROID_SETTINGS, "tv-settings", Ui.tr("Ajustes da TV", "TV Settings"), "tv_settings"));
         return items;
     }

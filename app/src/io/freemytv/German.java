@@ -9,7 +9,7 @@ final class German {
             case "Live TV": return "Live-TV";
             case "All Apps": return "Alle Apps";
             case "Settings": return "Einstellungen";
-            case "Home Settings": return "Start-Einstellungen";
+            case "Launcher Settings": return "Launcher-Einstellungen";
             case "TV Settings": return "TV-Einstellungen";
             case "HDMI Inputs": return "HDMI-Eingänge";
             case "Inputs": return "Eingänge";
@@ -20,7 +20,9 @@ final class German {
             case "Sunset ": return "Sonnenuntergang ";
             case "Crypto": return "Krypto";
             case "24h change": return "Änderung in 24 h";
-            case "For You": return "Für dich";
+            case "Good morning": return "Guten Morgen";
+            case "Good afternoon": return "Guten Tag";
+            case "Good evening": return "Guten Abend";
             case "Couldn't open ": return "Konnte nicht öffnen: ";
             case " of ": return " von ";
             case "← → to move · OK to drop · Back to cancel": return "← → verschieben · OK ablegen · Zurück abbrechen";

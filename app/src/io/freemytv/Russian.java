@@ -16,7 +16,7 @@ final class Russian {
             case "Live TV": return "Телеканалы";
             case "All Apps": return "Приложения";
             case "Settings": return "Настройки";
-            case "Home Settings": return "Главный экран";
+            case "Launcher Settings": return "Настройки лаунчера";
             case "TV Settings": return "Настройки ТВ";
             case "HDMI Inputs": return "Входы HDMI";
             case "Inputs": return "Входы";
@@ -27,7 +27,9 @@ final class Russian {
             case "Sunset ": return "Закат ";
             case "Crypto": return "Криптовалюты";
             case "24h change": return "изменение за 24 ч";
-            case "For You": return "Для вас";
+            case "Good morning": return "Доброе утро";
+            case "Good afternoon": return "Добрый день";
+            case "Good evening": return "Добрый вечер";
             case "← → to move · OK to drop · Back to cancel": return "← → — переместить · OK — оставить · Назад — отмена";
             case "Moving ": return "Перемещение: ";
             case ", position ": return ", место ";
