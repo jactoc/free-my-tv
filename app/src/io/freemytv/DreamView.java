@@ -146,13 +146,9 @@ final class DreamView extends View implements Choreographer.FrameCallback, HomeD
         scene.setMotion(0.4f, 0.32f);
         scene.applyPalette();
         content.setUseCompositingLayer(true, null);
-        try {
-            glassShader = new RuntimeShader(Shaders.GLASS_TEXT);
-            glassPaint.setShader(glassShader);
-        } catch (RuntimeException | LinkageError e) {   // Android 9 to 12: no AGSL
-            AppLog.w("glass clock unavailable: " + e.getMessage());
-            glassShader = null;
-        }
+        // No glass clock: a plain white clock with a soft shadow reads better over the photos (the glass shader is kept in
+        // the code, off, and the fallback below it draws the clock).
+        glassShader = null;
         black.setColor(0xFF000000);
         shadowPaint.setColor(0xFF000000);
     }

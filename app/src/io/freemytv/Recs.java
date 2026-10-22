@@ -58,6 +58,7 @@ final class Recs {
         volatile String trailer;
         volatile int watchlisted = -1;      // -1 not known yet, 0 no, 1 yes
         volatile boolean lookedUp, lookingUp;
+        volatile boolean detailing;     // its details are being fetched (Browse lists load them as you scroll)
     }
 
     interface Listener { void onRecs(); }
@@ -403,6 +404,237 @@ final class Recs {
         if (!hasKey(context)) return out;
         for (Pick p : wanted()) if (p.detailed && p.pkg != null && (kind == null || kind.equals(p.kind))) out.add(p);
         return out;
+    }
+
+    // MARK: - Browse: the genres, then a genre's titles (on your apps and in your Plex library)
+
+    private static final String[] GENRE_NAMES = {"Action", "Adventure", "Animation", "Comedy", "Crime", "Documentary", "Drama",
+            "Family", "Fantasy", "Horror", "Mystery", "Romance", "Science Fiction", "Thriller", "War", "Western"};
+    /** TMDB's genre numbers for movies and for shows (0: none; shows have combined ones, like "Action & Adventure"). */
+    private static final int[] GENRE_MOVIE = {28, 12, 16, 35, 80, 99, 18, 10751, 14, 27, 9648, 10749, 878, 53, 10752, 37};
+    private static final int[] GENRE_TV = {10759, 10759, 16, 35, 80, 99, 18, 10751, 10765, 0, 9648, 0, 10765, 0, 10768, 37};
+    /** What Plex calls each genre (a library may use any of these). */
+    private static final String[][] GENRE_PLEX = {{"Action", "Action & Adventure"}, {"Adventure", "Action & Adventure"}, {"Animation"},
+            {"Comedy"}, {"Crime"}, {"Documentary"}, {"Drama"}, {"Family"}, {"Fantasy", "Sci-Fi & Fantasy"}, {"Horror"}, {"Mystery"},
+            {"Romance"}, {"Science Fiction", "Sci-Fi", "Sci-Fi & Fantasy"}, {"Thriller", "Suspense"}, {"War", "War & Politics"}, {"Western"}};
+    private static final long BROWSE_LISTS_FOR = 30 * 60_000L;
+
+    private final List<Pick> genreCards = new ArrayList<>();
+    private long genresAt;
+    private String genresLanguage = "";
+    private volatile boolean genresLoading;
+    private final Map<Integer, List<Pick>> genreLists = new HashMap<>();
+    private final Map<Integer, Long> genreListsAt = new HashMap<>();
+    private final Set<Integer> genreListsLoading = new HashSet<>();
+    private String providerIds = "";
+    private long providerIdsAt;
+
+    /** The genre cards (each shows a popular title of that genre from your apps); empty until they have loaded. */
+    List<Pick> genreCards() {
+        synchronized (genreCards) { return new ArrayList<>(genreCards); }
+    }
+
+    /** Makes the genre cards (a request per genre, remembered for 6 hours); the listeners are told when they are ready. */
+    void ensureGenres() {
+        if (!hasKey(context) || genresLoading) return;
+        synchronized (genreCards) {
+            if (!genreCards.isEmpty() && System.currentTimeMillis() - genresAt < LIST_EVERY && genresLanguage.equals(Ui.language)) return;
+        }
+        genresLoading = true;
+        detailIo.execute(() -> {
+            try {
+                fetchGenres();
+            } catch (Exception e) {
+                AppLog.w("genres: " + (e.getMessage() == null ? e.toString() : e.getMessage()));
+            } finally {
+                genresLoading = false;
+                notifyListeners();
+            }
+        });
+    }
+
+    private void fetchGenres() throws Exception {
+        String ids = providerFilter();
+        Map<Integer, String> names = new HashMap<>();
+        JSONArray list = get("/genre/movie/list?language=" + lang()).getJSONArray("genres");
+        for (int i = 0; i < list.length(); i++) names.put(list.getJSONObject(i).getInt("id"), list.getJSONObject(i).getString("name"));
+        List<Pick> out = new ArrayList<>();
+        for (int i = 0; i < GENRE_NAMES.length; i++) {
+            Pick p = new Pick();
+            p.id = i;
+            p.kind = "genre";
+            p.title = names.containsKey(GENRE_MOVIE[i]) ? names.get(GENRE_MOVIE[i]) : GENRE_NAMES[i];
+            p.meta = Ui.tr("Filmes e séries", "Movies and shows");
+            p.detailed = true;
+            String backdrop = null;
+            try {
+                backdrop = topBackdrop("movie", GENRE_MOVIE[i], ids);
+                if (backdrop == null && GENRE_TV[i] > 0) backdrop = topBackdrop("tv", GENRE_TV[i], ids);
+            } catch (Exception e) {
+                AppLog.w("genre " + p.title + ": " + e.getMessage());
+            }
+            p.backdrop = backdrop;
+            out.add(p);
+        }
+        synchronized (genreCards) {
+            genreCards.clear();
+            genreCards.addAll(out);
+            genresAt = System.currentTimeMillis();
+            genresLanguage = Ui.language;
+        }
+    }
+
+    /** TMDB's number for each of your streaming services in your country, as "a|b|c" (empty: none known). */
+    private String providerFilter() throws Exception {
+        if (!providerIds.isEmpty() && System.currentTimeMillis() - providerIdsAt < LIST_EVERY) return providerIds;
+        StringBuilder ids = new StringBuilder();
+        JSONArray providers = get("/watch/providers/movie?language=" + lang() + "&watch_region=" + REGION).getJSONArray("results");
+        for (int i = 0; i < providers.length(); i++) {
+            JSONObject o = providers.getJSONObject(i);
+            String[] s = service(o.optString("provider_name"));
+            if (s != null && installed(s[2])) ids.append(ids.length() == 0 ? "" : "|").append(o.getInt("provider_id"));
+        }
+        providerIds = ids.toString();
+        providerIdsAt = System.currentTimeMillis();
+        return providerIds;
+    }
+
+    private String discoverQuery(String kind, int genre, String ids) throws Exception {
+        return "/discover/" + kind + "?with_genres=" + genre + "&sort_by=popularity.desc&vote_count.gte=" + (kind.equals("movie") ? 100 : 50)
+                + "&language=" + lang() + "&watch_region=" + REGION + "&include_adult=false"
+                + (ids.isEmpty() ? "" : "&with_watch_monetization_types=flatrate&with_watch_providers=" + URLEncoder.encode(ids, "UTF-8"));
+    }
+
+    private String topBackdrop(String kind, int genre, String ids) throws Exception {
+        JSONArray results = get(discoverQuery(kind, genre, ids)).getJSONArray("results");
+        for (int i = 0; i < results.length(); i++) {
+            JSONObject o = results.getJSONObject(i);
+            String b = o.optString("backdrop_path", "");
+            if (!b.isEmpty() && !"null".equals(b) && !(Config.HIDE_ANIMATION && animated(o))) return b;
+        }
+        return null;
+    }
+
+    /** The titles of a genre as the carousel shows them (those not on any of your apps drop out once their details are in). */
+    List<Pick> genreList(int genre) {
+        List<Pick> out = new ArrayList<>();
+        synchronized (genreLists) {
+            List<Pick> list = genreLists.get(genre);
+            if (list != null) for (Pick p : list) if (!p.detailed || p.pkg != null) out.add(p);
+        }
+        return out;
+    }
+
+    boolean genreLoading(int genre) {
+        synchronized (genreLists) { return genreListsLoading.contains(genre) || !genreLists.containsKey(genre); }
+    }
+
+    /** Fetches a genre's titles: popular ones on your apps, mixed one for one with your unwatched Plex titles of that genre. */
+    void loadGenre(int genre) {
+        synchronized (genreLists) {
+            Long at = genreListsAt.get(genre);
+            if (genreListsLoading.contains(genre) || (at != null && System.currentTimeMillis() - at < BROWSE_LISTS_FOR)) return;
+            genreListsLoading.add(genre);
+        }
+        detailIo.execute(() -> {
+            List<Pick> mixed = new ArrayList<>();
+            try {
+                String ids = providerFilter();
+                List<Pick> movies = discoverGenre("movie", GENRE_MOVIE[genre], ids);
+                List<Pick> shows = GENRE_TV[genre] > 0 ? discoverGenre("tv", GENRE_TV[genre], ids) : new ArrayList<>();
+                List<Pick> tmdb = new ArrayList<>();
+                alternate(tmdb, new HashSet<>(), movies, shows, 40);
+                List<Pick> plex = new ArrayList<>();
+                if (plexOn() && installed(PLEX_PKG)) {
+                    try {
+                        plex = plexGenre(genre);
+                    } catch (Exception e) {
+                        AppLog.w("plex genre: " + (e.getMessage() == null ? e.toString() : e.getMessage()));
+                    }
+                }
+                for (int i = 0; i < Math.max(tmdb.size(), plex.size()); i++) {
+                    if (i < plex.size()) mixed.add(plex.get(i));
+                    if (i < tmdb.size()) mixed.add(tmdb.get(i));
+                }
+                synchronized (genreLists) {
+                    genreLists.put(genre, mixed);
+                    genreListsAt.put(genre, System.currentTimeMillis());
+                }
+                notifyListeners();
+                // The first ones get their details now (which app they are on, the description...); the rest as you scroll.
+                for (int i = 0; i < Math.min(12, mixed.size()); i++) {
+                    Pick p = mixed.get(i);
+                    if (!p.detailed) {
+                        try {
+                            fetchDetails(p);
+                        } catch (Exception ignored) {
+                        }
+                    }
+                    if (i % 3 == 2) notifyListeners();
+                }
+            } catch (Exception e) {
+                AppLog.w("genre: " + (e.getMessage() == null ? e.toString() : e.getMessage()));
+                synchronized (genreLists) { genreLists.put(genre, mixed); }
+            } finally {
+                synchronized (genreLists) { genreListsLoading.remove(genre); }
+                notifyListeners();
+            }
+        });
+    }
+
+    private List<Pick> discoverGenre(String kind, int genre, String ids) throws Exception {
+        JSONArray results = get(discoverQuery(kind, genre, ids)).getJSONArray("results");
+        List<Pick> out = new ArrayList<>();
+        for (int i = 0; i < results.length() && out.size() < 20; i++) add(out, results.getJSONObject(i), kind);
+        return out;
+    }
+
+    /** Your unwatched Plex titles of a genre (newest first), under whatever names the libraries give it. */
+    private List<Pick> plexGenre(int genre) throws Exception {
+        String machine = plexGet("/identity").getString("machineIdentifier");
+        List<Pick> movies = new ArrayList<>(), shows = new ArrayList<>();
+        JSONArray sections = plexGet("/library/sections").optJSONArray("Directory");
+        for (int i = 0; sections != null && i < sections.length(); i++) {
+            JSONObject section = sections.getJSONObject(i);
+            String type = section.optString("type");
+            if (!type.equals("movie") && !type.equals("show")) continue;
+            boolean movie = type.equals("movie");
+            JSONArray tags = plexGet("/library/sections/" + section.getString("key") + "/genre").optJSONArray("Directory");
+            StringBuilder keys = new StringBuilder();
+            for (int t = 0; tags != null && t < tags.length(); t++) {
+                for (String alias : GENRE_PLEX[genre]) {
+                    if (tags.getJSONObject(t).optString("title").equalsIgnoreCase(alias)) {
+                        keys.append(keys.length() == 0 ? "" : ",").append(tags.getJSONObject(t).getString("key"));
+                    }
+                }
+            }
+            if (keys.length() == 0) continue;
+            JSONArray items = plexGet("/library/sections/" + section.getString("key") + "/all?type=" + (movie ? 1 : 2) + "&genre=" + keys
+                    + "&unwatched=1&includeGuids=1&sort=addedAt:desc&X-Plex-Container-Start=0&X-Plex-Container-Size=20").optJSONArray("Metadata");
+            for (int j = 0; items != null && j < items.length(); j++) {
+                Pick p = plexPick(items.getJSONObject(j), movie ? "movie" : "tv", machine);
+                if (p != null) (movie ? movies : shows).add(p);
+            }
+        }
+        List<Pick> out = new ArrayList<>();
+        alternate(out, new HashSet<>(), movies, shows, 20);
+        return out;
+    }
+
+    /** Fetches a pick's details in the background (which app it is on, description, cast); the listeners are told. */
+    void details(Pick p) {
+        if (p == null || p.detailed || p.detailing) return;
+        p.detailing = true;
+        detailIo.execute(() -> {
+            try {
+                fetchDetails(p);
+            } catch (Exception e) {
+                AppLog.w("details: " + (e.getMessage() == null ? e.toString() : e.getMessage()));
+            } finally {
+                p.detailing = false;
+                notifyListeners();
+            }
+        });
     }
 
     // MARK: - Trailer and Plex watchlist (looked up when the detail screen opens)

@@ -146,8 +146,8 @@ final class German {
                             + english.substring("Free My TV is on: new home screen and screensaver, ".length()).replace(" apps turned off.", " Apps ausgeschaltet.");
                 }
                 if (english.startsWith("On · ")) {
-                    return "An · " + english.substring(5).replace(" titles from the TV's apps, 3 new ones every hour.",
-                            " Titel aus den Apps des Fernsehers, 3 neue pro Stunde.");
+                    return "An · " + english.substring(5).replace(" titles from the TV's apps and Plex to scroll through.",
+                            " Titel aus den Apps des Fernsehers und von Plex zum Durchblättern.");
                 }
                 if (english.startsWith("OK adds or removes (up to ")) {
                     return "OK fügt hinzu oder entfernt (bis zu " + english.substring("OK adds or removes (up to ".length())

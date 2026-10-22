@@ -138,8 +138,8 @@ final class Spanish {
                             + english.substring("Free My TV is on: new home screen and screensaver, ".length()).replace(" apps turned off.", " apps desactivadas.");
                 }
                 if (english.startsWith("On · ")) {
-                    return "Activas · " + english.substring(5).replace(" titles from the TV's apps, 3 new ones every hour.",
-                            " títulos de las apps del TV, 3 nuevos cada hora.");
+                    return "Activas · " + english.substring(5).replace(" titles from the TV's apps and Plex to scroll through.",
+                            " títulos de las apps del TV y de Plex para recorrer.");
                 }
                 if (english.endsWith(" min ago")) return "hace " + english.substring(0, english.length() - 4);
                 if (english.endsWith(" h ago")) return "hace " + english.substring(0, english.length() - 4);

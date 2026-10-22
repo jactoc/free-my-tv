@@ -125,6 +125,7 @@ update signed by another. `python3 webos/build.py --generic` makes the LG `.ipk`
 
 - `plex_url`, `plex_token` (`config.properties`) and `name`: the same rules as the TMDB key (theirs, secret, only in `config.properties`, never printed, never committed). `build.sh` writes a network security config from `plex_url`'s host, so plain http is allowed for that one host only; nothing about their network goes in the repository.
 - `Recs`: the Plex picks (`fetchPlex`, mixed 1:1 into the list), the carousel's lists (`all`, `wanted`), the detail screen's posters, trailers and watchlist (`poster`, `lookup`, `watchlist`, on their own thread, `detailIo`). `HomeView`: the carousel (`layoutCards`, `cardPos`) and the detail screen (`drawDetail`, three buttons). `TrailerActivity`: trailers in YouTube's embedded player, so Back returns to the title.
+- Browse (`TAB_BROWSE`, `browseGenre`): genre cards are `Pick`s of kind `genre` (`Recs.genreCards`, `loadGenre`, `genreList`, `details`); `TABS_N` is the number of tabs, and the round buttons take the indices after them.
 - The carousel scrolls on a weak GPU: keep `drawLightCard` free of allocations, text measuring and live blurs (`Shadows.drawCached`), and keep the background change deferred while the focus moves (`focusCard`).
 
 ## Adapting it to another TV
