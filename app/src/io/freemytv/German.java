@@ -39,6 +39,7 @@ final class German {
             case "Updating Home TV…": return "Home TV wird aktualisiert…";
             case "TV Settings": return "TV-Einstellungen";
             case "HDMI Inputs": return "HDMI-Eingänge";
+            case "No HDMI inputs on this TV": return "Keine HDMI-Eingänge an diesem TV";
             case "Inputs": return "Eingänge";
             case "Shortcuts": return "Verknüpfungen";
             case "Weather": return "Wetter";

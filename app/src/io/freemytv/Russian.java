@@ -46,6 +46,7 @@ final class Russian {
             case "Updating Home TV…": return "Обновление Home TV…";
             case "TV Settings": return "Настройки ТВ";
             case "HDMI Inputs": return "Входы HDMI";
+            case "No HDMI inputs on this TV": return "На этом телевизоре нет входов HDMI";
             case "Inputs": return "Входы";
             case "Shortcuts": return "Ярлыки";
             case "Weather": return "Погода";

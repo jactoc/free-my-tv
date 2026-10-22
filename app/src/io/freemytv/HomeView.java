@@ -144,6 +144,9 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     /** The carousel first (the shelf lives in the Apps tab); without a TMDB key there is no carousel, and the shelf is the home. */
     private int zone = Config.TMDB_KEY.trim().isEmpty() ? Z_SHELF : Z_CARDS;
     private final HashMap<String, LinearGradient> appGradients = new HashMap<>();     // the Apps tab's brand cards
+    private boolean loadingShown;           // a spinner is on screen: frames keep coming while it turns
+    private Paint spinPaint;
+    private List<HomeApps.Item> sheetSaved;  // HDMI Inputs: the inputs in the All Apps sheet, the apps put back after
 
     // Night look (like Apple's "Automatic" appearance): darker from sunset to sunrise, with a 2 s transition.
     private static final long NIGHT_MS = 2000;
@@ -683,6 +686,10 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         lCardTitle.setLetterSpacing(0.012f);
         lCardMeta = Ui.text(Ui.medium, 25 * k, L_DIM);
         lSection = Ui.text(Ui.semibold, 27 * k, L_INK);
+        spinPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        spinPaint.setStyle(Paint.Style.STROKE);
+        spinPaint.setStrokeCap(Paint.Cap.ROUND);
+        spinPaint.setStrokeWidth(4 * k);
         lQuote = Ui.numbers(Ui.regular, 21 * k, L_FAINT);
         lTip = Ui.text(Ui.semibold, 25 * k, L_INK);
         lTip.setTextAlign(Paint.Align.CENTER);
@@ -806,7 +813,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         boolean busy = tilesMoving || statusMoving || heroMoving || drawerItemsMoving || gridMoving || drawerMoving
                 || sheetMoving || detailMoving || toastFading || heroFading || bgFading || nightMoving || sheetOpen || sheet.value > 0.001f
                 || detailOpen || detail.value > 0.001f || browseMoving
-                || (drawerOpen && tab != TAB_APPS) || drawer.value > 0.001f || toast != null || !toasts.isEmpty();
+                || (drawerOpen && tab != TAB_APPS) || drawer.value > 0.001f || toast != null || !toasts.isEmpty() || loadingShown;
+        if (loadingShown) cardsLayer.invalidate();
         idle = !busy;
         if (busy) Choreographer.getInstance().postFrameCallback(this);
         else Choreographer.getInstance().postFrameCallbackDelayed(this, 1000);
@@ -851,7 +859,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         drawerLayer.setAlpha(da);
         drawerLayer.setVisibility(da > 0.002f ? VISIBLE : INVISIBLE);
         // The Apps tab is All Apps as a page under the tabs; elsewhere All Apps opens over the screen.
-        boolean appsPage = cardsHome && tab == TAB_APPS;
+        boolean appsPage = cardsHome && tab == TAB_APPS && !sheetOpen && s < 0.001f;
         sheetLayer.setVisibility(s > 0.001f || sheetOpen || appsPage ? VISIBLE : INVISIBLE);
         sheetLayer.setAlpha(appsPage ? home : s);
         float scale = appsPage ? 1 : 1.04f - 0.04f * s;
@@ -1920,6 +1928,10 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     }
 
     private void closeSheet() {
+        if (sheetSaved != null) {       // it showed the HDMI inputs: the apps go back
+            setOthers(sheetSaved);
+            sheetSaved = null;
+        }
         sheetOpen = false;
         sheet.target = 0;
         retarget(false);
@@ -2142,7 +2154,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     }
 
     private void drawSheet(Canvas c) {
-        boolean page = appsPage();      // the Apps tab: on the background, under the tabs, cards as on the shelf
+        boolean page = appsPage() && !sheetOpen && sheet.value < 0.001f;      // the Apps tab: under the tabs, cards as on the shelf
         float shift = scroll.value * GRID_ROW * k;
         if (page) {
             applyTone();
@@ -2150,7 +2162,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             c.clipRect(0, D_CLIP * k, w, h);    // the rows that scroll up go under an edge below the tabs
         } else {
             c.drawColor(0xA8000000);
-            c.drawText(Ui.tr("Todos os Apps", "All Apps"), w / 2f, 124 * k - shift, sheetTitle);
+            c.drawText(sheetSaved != null ? Ui.tr("Entradas HDMI", "HDMI Inputs") : Ui.tr("Todos os Apps", "All Apps"), w / 2f, 124 * k - shift, sheetTitle);
         }
         int n = others.size();
         if (gridLabels == null || gridLabels.length != n) {
@@ -2169,7 +2181,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             float x = left + col * (GRID_W + GRID_GAP) * k;
             gridCell.set(x, y, x + GRID_W * k, y + GRID_H * k);
             float f = gridFocus[i].value;
-            if (page) drawAppCard(c, others.get(i), gridCell, f);
+            if (page || sheetSaved != null) drawAppCard(c, others.get(i), gridCell, f);
             else drawCard(c, others.get(i).tile, gridCell, GRID_RADIUS * k, f, 0.08f);
             if ((sheetOpen || appsFocused()) && i == gridIndex) focusedCell.set(cell);
             gridLabel.setColor(page ? blend(tone(L_DIM, 0xFF98989D), tone(L_INK, WHITE), Ui.clamp(f)) : blend(0x99FFFFFF, 0xFFFFFFFF, Ui.clamp(f)));
@@ -2198,7 +2210,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         int[] style = TILE_STYLE.get(it.key);
         tileFill.setShader(null);
         tileFill.setAlpha(255);
-        if (it.kind == HomeApps.SETTINGS || it.kind == HomeApps.ANDROID_SETTINGS) {
+        if (it.kind != HomeApps.APP && it.symbol != null && it.logo == null) {     // the settings tiles, the HDMI inputs
             tileFill.setColor(tone(0xFFFFFFFF, 0xFF3A3A3C));
             c.drawRoundRect(cell, r, r, tileFill);
             Symbols.draw(getContext(), c, it.symbol, cx, cy, 64 * k * s, tone(L_INK, WHITE));
@@ -2730,6 +2742,18 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         }
         click.open();
         if (it.kind == HomeApps.ALL_APPS) {
+            openSheet();
+            return;
+        }
+        if (it.kind == HomeApps.INPUTS && picksOn()) {
+            List<HomeApps.Item> inputs = new ArrayList<>();
+            for (HomeApps.Item d : drawerItems) if (d.kind == HomeApps.INPUT || d.kind == HomeApps.LIVE_TV) inputs.add(d);
+            if (inputs.isEmpty()) {
+                showToast(Ui.tr("Nenhuma entrada HDMI nesta TV", "No HDMI inputs on this TV", "Ninguna entrada HDMI en este TV"));
+                return;
+            }
+            sheetSaved = others;
+            setOthers(inputs);
             openSheet();
             return;
         }
@@ -3416,6 +3440,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
 
     /** The carousel (its own layer, so it can scroll away when the apps rise): the cards, and the note when there are none. */
     private void drawLightCards(Canvas c) {
+        loadingShown = false;
         applyTone();
         if (!picksOn()) return;
         if (tab == TAB_HOME) {
@@ -3430,11 +3455,19 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             }
         }
         if (cards.isEmpty() && tab == TAB_BROWSE) {
-            String note = browseGenre >= 0 && !recs.genreLoading(browseGenre, browseKind)
-                    ? Ui.tr("Nada disponível nos seus apps ou no Plex", "Nothing here on your apps or Plex")
-                    : Ui.tr("Carregando…", "Loading…");
-            c.drawText(note, MARGIN * k, (L_CARDS_TOP + 70) * k, lCardMeta);
+            if (browseGenre >= 0 && !recs.genreLoading(browseGenre, browseKind)) {
+                c.drawText(Ui.tr("Nada disponível nos seus apps ou no Plex", "Nothing here on your apps or Plex"), MARGIN * k, (L_CARDS_TOP + 70) * k, lCardMeta);
+            } else {
+                drawSpinner(c, MARGIN * k + 22 * k, (L_CARDS_TOP + 60) * k);
+            }
         }
+    }
+
+    /** Something is loading: a turning arc (the frame loop keeps going while one is on screen). */
+    private void drawSpinner(Canvas c, float cx, float cy) {
+        spinPaint.setColor(tone(L_DIM, 0xFF98989D));
+        Ui.spinner(c, cx, cy, 20 * k, SystemClock.uptimeMillis() / 1000f * 1.3f, spinPaint);
+        loadingShown = true;
     }
 
     /** One carousel: the cards past the left margin go under it, the focused one is drawn last (it overlaps). */
@@ -3662,7 +3695,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     /** Home: the row's heading (what it holds), then its cards, large, with the title and details under each. */
     private void drawHome(Canvas c) {
         if (cards.isEmpty()) {
-            c.drawText(Ui.tr("Carregando…", "Loading…"), MARGIN * k, H_LABEL * k, lCardMeta);
+            drawSpinner(c, MARGIN * k + 22 * k, (H_TOP + 40) * k);
             return;
         }
         c.drawText(homeSource == HOME_UP_NEXT ? Ui.tr("Continuar assistindo", "Up Next", "Seguir viendo")
