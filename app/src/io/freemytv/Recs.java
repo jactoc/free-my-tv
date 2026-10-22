@@ -63,6 +63,9 @@ final class Recs {
         float progress;                 // Continue Watching: how far in you are (0 to 1), 0 = not started
         String showKey;                 // an episode's show (its Plex key), for the show's TMDB number
         String plexType;                // "season" for a season in New (its link plays the first episode not watched)
+        String still;                   // Up Next's landscape image (Home): an episode's own still, a movie's photo
+        String badge;                   // the pill on a New poster ("Season 2")
+        String seasonKey;               // an episode's season (its Plex key): New leaves out a season you're in
     }
 
     interface Listener { void onRecs(); }
@@ -784,6 +787,8 @@ final class Recs {
             p.poster = plexBase() + "/photo/:/transcode?width=480&height=720&minSize=1&upscale=1&url=" + URLEncoder.encode(thumb, "UTF-8");
         }
         p.link = plexPlayLink(machine, rating);
+        String still = episode ? o.optString("thumb", art) : art;     // an episode's thumb is a frame of the episode
+        p.still = plexBase() + "/photo/:/transcode?width=480&height=270&minSize=1&upscale=1&url=" + URLEncoder.encode(still, "UTF-8");
         p.app = "plex";
         p.pkg = PLEX_PKG;
         p.detailed = true;
@@ -791,7 +796,10 @@ final class Recs {
         p.year = o.optString("year");
         String guid = episode ? o.optString("grandparentGuid") : o.optString("guid");
         if (guid.startsWith("plex://")) p.discoverId = guid.substring(guid.lastIndexOf('/') + 1);
-        if (episode) p.showKey = o.optString("grandparentRatingKey");
+        if (episode) {
+            p.showKey = o.optString("grandparentRatingKey");
+            p.seasonKey = o.optString("parentRatingKey");
+        }
         JSONArray guids = o.optJSONArray("Guid");
         for (int i = 0; !episode && guids != null && i < guids.length(); i++) {
             String id = guids.getJSONObject(i).optString("id");
@@ -824,11 +832,6 @@ final class Recs {
         synchronized (newPicks) { return new ArrayList<>(newPicks); }
     }
 
-    /** Whether the list has been asked for at least once (until then the tab says "Loading…"). */
-    boolean newLoaded() {
-        return newAt != 0;
-    }
-
     /** Asks Plex again (not more than every 10 minutes; a minute after a failure); the listeners are told of changes. */
     void refreshNew() {
         if (!plexOn() || !installed(PLEX_PKG) || newLoading) return;
@@ -855,7 +858,7 @@ final class Recs {
                 newAt = System.currentTimeMillis() - 9 * 60_000L;
                 plexState = -1;
                 AppLog.w("new: " + (e.getMessage() == null ? e.toString() : e.getMessage()));
-                notifyListeners();      // "Loading…" gives way to the empty note
+                notifyListeners();      // Home stops waiting for it: its row falls back to the picks
             } finally {
                 newLoading = false;
             }
@@ -955,6 +958,7 @@ final class Recs {
         p.backdrop = "plex" + key + "-" + Integer.toHexString(art.hashCode()) + ".jpg";
         p.image = plexBase() + "/photo/:/transcode?width=" + Backdrop.W + "&height=" + Backdrop.H + "&minSize=1&upscale=1&url="
                 + URLEncoder.encode(art, "UTF-8");
+        p.still = plexBase() + "/photo/:/transcode?width=480&height=270&minSize=1&upscale=1&url=" + URLEncoder.encode(art, "UTF-8");
         String thumb = s.optString("thumb", s.optString("parentThumb"));
         if (!thumb.isEmpty()) {
             p.poster = plexBase() + "/photo/:/transcode?width=480&height=720&minSize=1&upscale=1&url=" + URLEncoder.encode(thumb, "UTF-8");
@@ -981,7 +985,8 @@ final class Recs {
         }
         int total = s.optInt("leafCount"), watched = s.optInt("viewedLeafCount");
         List<String> parts = new ArrayList<>();
-        parts.add(Ui.tr("Temporada ", "Season ") + s.optInt("index"));
+        p.badge = Ui.tr("Temporada ", "Season ") + s.optInt("index");
+        parts.add(p.badge);
         if (total > 0) parts.add(total + " " + (total == 1 ? Ui.tr("episódio", "episode") : Ui.tr("episódios", "episodes")));
         if (watched > 0) parts.add((total - watched) + " " + Ui.tr("por ver", "to watch"));
         p.meta = String.join(" · ", parts);
@@ -1115,10 +1120,22 @@ final class Recs {
      */
     Bitmap tile(Pick p) {
         if (p == null) return null;
-        final boolean genre = "genre".equals(p.kind);
-        final String url = genre ? (p.backdrop == null ? null : IMAGES + p.backdrop) : p.poster;
+        boolean genre = "genre".equals(p.kind);
+        // The focused tile's size (1.07×): a genre strip of about 452×173, a poster of about 231×347.
+        return genre ? small(p, "g:", p.backdrop == null ? null : IMAGES + p.backdrop, 460, 180) : small(p, "p:", p.poster, 240, 360);
+    }
+
+    /** Home's landscape image: an episode's still, a movie's or show's photo (a TMDB pick's backdrop, smaller). */
+    Bitmap still(Pick p) {
+        if (p == null) return null;
+        String url = p.still != null ? p.still
+                : p.backdrop != null && !p.backdrop.startsWith("plex") ? "https://image.tmdb.org/t/p/w780" + p.backdrop : null;
+        return small(p, "s:", url, 546, 307);     // Home's card, focused (1.05×)
+    }
+
+    private Bitmap small(Pick p, String type, String url, int w, int h) {
         if (url == null) return null;
-        final String key = (genre ? "g:" : "p:") + key(p);
+        final String key = type + key(p);
         synchronized (tiles) {
             Bitmap b = tiles.get(key);
             if (b != null) return b;
@@ -1128,10 +1145,15 @@ final class Recs {
             boolean ok = false;
             try {
                 File dir = new File(context.getCacheDir(), "recs");
-                File f = genre ? imageFile(p) : new File(dir, "poster-" + key(p).replace(":", "-") + ".jpg");
-                if (!f.exists()) fetch(url, f);
-                // The focused tile's size (1.07×): a genre strip of about 452×173, a poster of about 231×347.
-                Bitmap b = genre ? decodeCover(f, Backdrop.ui(460), Backdrop.ui(180)) : decodeCover(f, Backdrop.ui(240), Backdrop.ui(360));
+                //noinspection ResultOfMethodCallIgnored
+                dir.mkdirs();
+                File f = type.equals("g:") ? imageFile(p)
+                        : new File(dir, (type.equals("s:") ? "still-" : "poster-") + key(p).replace(":", "-") + ".jpg");
+                if (!f.exists()) {
+                    fetch(url, f);
+                    prune(dir);
+                }
+                Bitmap b = decodeCover(f, Backdrop.ui(w), Backdrop.ui(h));
                 synchronized (tiles) { tiles.put(key, b); }
                 ok = true;
             } catch (IOException | RuntimeException | OutOfMemoryError e) {
@@ -1377,6 +1399,7 @@ final class Recs {
         p.backdrop = "plex" + rating + "-" + Integer.toHexString(art.hashCode()) + ".jpg";
         p.image = plexBase() + "/photo/:/transcode?width=" + Backdrop.W + "&height=" + Backdrop.H + "&minSize=1&upscale=1&url="
                 + URLEncoder.encode(art, "UTF-8");
+        p.still = plexBase() + "/photo/:/transcode?width=480&height=270&minSize=1&upscale=1&url=" + URLEncoder.encode(art, "UTF-8");
         // The Plex TV app plays the item (a show: its next episode) for this link: found in the app itself, the older
         // "plex://preplay/..." and "server://..." forms are ignored by it.
         p.link = plexPlayLink(machine, rating);

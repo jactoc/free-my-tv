@@ -17,13 +17,15 @@ final class Russian {
             case "All Apps": return "Приложения";
             case "Settings": return "Настройки";
             case "Launcher Settings": return "Настройки лаунчера";
-            // The New tab (Recs.fetchNew, seasons)
+            // Home: Up Next and New on Plex (Recs.fetchNew, seasons)
+            case "Up Next": return "Продолжить просмотр";
+            case "New on Plex": return "Новое на Plex";
+            case "Start something new": return "Начните что-нибудь новое";
+            case "Trending on your apps": return "Популярное в ваших приложениях";
             case "Season ": return "Сезон ";
             case "episode": return "серия";
             case "episodes": return "серий";
             case "to watch": return "не просмотрено";
-            case "Nothing new on Plex yet": return "На Plex пока нет нового";
-            case "Nothing to continue yet: start something on Plex": return "Пока нечего продолжить: начните что-нибудь в Plex";
             // Updates over the home network (Updates, Launcher Settings → Update)
             case "Checking for updates…": return "Поиск обновлений…";
             case "New version ready": return "Новая версия готова";

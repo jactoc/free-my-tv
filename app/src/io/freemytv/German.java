@@ -10,13 +10,15 @@ final class German {
             case "All Apps": return "Alle Apps";
             case "Settings": return "Einstellungen";
             case "Launcher Settings": return "Launcher-Einstellungen";
-            // The New tab (Recs.fetchNew, seasons)
+            // Home: Up Next and New on Plex (Recs.fetchNew, seasons)
+            case "Up Next": return "Weiterschauen";
+            case "New on Plex": return "Neu auf Plex";
+            case "Start something new": return "Etwas Neues anfangen";
+            case "Trending on your apps": return "Angesagt in deinen Apps";
             case "Season ": return "Staffel ";
             case "episode": return "Folge";
             case "episodes": return "Folgen";
             case "to watch": return "offen";
-            case "Nothing new on Plex yet": return "Noch nichts Neues auf Plex";
-            case "Nothing to continue yet: start something on Plex": return "Noch nichts zum Weiterschauen: starte etwas auf Plex";
             // Updates over the home network (Updates, Launcher Settings → Update)
             case "Checking for updates…": return "Suche nach Updates…";
             case "New version ready": return "Neue Version bereit";
