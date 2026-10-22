@@ -95,11 +95,14 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private static final ExecutorService LOADER = Executors.newSingleThreadExecutor();
     // Light design (the L_ constants): title, tab bar, three recommendation cards and the shelf.
     // The tab bar is a 68 px capsule; the cards sit on the 5-column grid (the wide one spans 3).
-    private static final float L_TITLE_BASE = 130, L_TABBAR_TOP = 158, L_TABBAR_H = 68, L_CARDS_TOP = 316, L_CARD_H = 500;
+    // No greeting in this fork: the tabs sit at the top, in line with the round buttons (L_BUTTON_CY), and what's below
+    // starts 90 px higher than in the original, with bigger cards.
+    private static final float L_TABBAR_TOP = 69, L_TABBAR_H = 68, L_CARDS_TOP = 226, L_CARD_H = 560;
+    private static final float L_FILTER_CY = 178;       // the All / Movies / Shows control
     private static final float L_TALL_W = 340, L_CARD_GAP = 40, L_BUTTON = 68, L_BUTTON_GAP = 20, L_BUTTON_CY = 103;
     private static final float L_PLATTER_TOP = 814, L_TILE_H = 150;
     /** Where the apps' tops are (virtual px): peeking from the bottom edge, and in the Apps tab under the tab bar. */
-    private static final float APPS_GRID_TOP = 312;     // the Apps tab's grid, under the tabs
+    private static final float APPS_GRID_TOP = 236;     // the Apps tab's grid, under the tabs
     private static final float L_DATE_BASE = 330, L_CLOCK_BASE = 540, L_WEATHER_BASE = 626, L_QUOTES_BASE = 694;
     private static final int L_INK = 0xFF1D1D1F, L_DIM = 0xFF6E6E73, L_FAINT = 0xFF8E8E93;
     private static final String[] TABS = {"Início", "Descobrir", "Categorias", "Apps"};
@@ -113,12 +116,12 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
      */
     private static final int TABS_N = 4, TAB_HOME = 0, TAB_DISCOVER = 1, TAB_BROWSE = 2, TAB_APPS = 3;
     // Home: one row of landscape cards under the tabs, the shelf of apps below it.
-    private static final float H_LABEL = 282, H_TOP = 312, H_W = 520, H_H = 292, H_GAP = 32;
-    private static final int H_VISIBLE = 3;
+    private static final float H_LABEL = 192, H_TOP = 222, H_W = 640, H_H = 360, H_GAP = 32;
+    private static final int H_VISIBLE = 2;
     private static final int HOME_UP_NEXT = 0, HOME_NEW = 1, HOME_TRENDING = 2;
     // Discover: the carousel, and New on Plex a page further down; the cards layer slides up by D_PAGE to show it, and
     // what goes up passes under an edge just below the filter (D_CLIP).
-    private static final float D_PAGE = 680, D_LABEL2 = 342 + D_PAGE, D_TOP2 = 364 + D_PAGE, D_CLIP = 296;
+    private static final float D_PAGE = 760, D_LABEL2 = 250 + D_PAGE, D_TOP2 = 272 + D_PAGE, D_CLIP = 206;
     private static final int Z_TOP = 4, Z_CARDS = 5, Z_FILTER = 10;     // Z_FILTER: All / Movies / Shows in Browse
     private static final int Z_APPS = 12;       // the Apps tab's grid
 
@@ -146,6 +149,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private final HashMap<String, LinearGradient> appGradients = new HashMap<>();     // the Apps tab's brand cards
     private boolean loadingShown;           // a spinner is on screen: frames keep coming while it turns
     private Paint spinPaint;
+    private LinearGradient darkFade, tileSheen;     // dark: the background's fade to black, the tiles' light from above
     private List<HomeApps.Item> sheetSaved;  // HDMI Inputs: the inputs in the All Apps sheet, the apps put back after
 
     // Night look (like Apple's "Automatic" appearance): darker from sunset to sunrise, with a 2 s transition.
@@ -604,8 +608,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         float kk = width / 1920f;
         measure(sky, width, height);
         measure(heroLayer, width, Math.round(330 * kk));
-        // From 240 (Home's heading sits above the carousel's top) to Discover's second page, below the screen.
-        measure(cardsLayer, width, Math.round((760 + D_PAGE) * kk));
+        // From 150 (Home's heading sits above the carousel's top) to Discover's second page, below the screen.
+        measure(cardsLayer, width, Math.round((850 + D_PAGE) * kk));
         measure(status, Math.round(1160 * kk), Math.round(240 * kk));
         // Sized to what they draw (the glass and its shadow; the grown tiles and their shadows): smaller layers are
         // cheaper for the GPU to composite on every frame of the drawer animation.
@@ -628,7 +632,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         float kk = width / 1920f;
         sky.layout(0, 0, width, height);
         place(heroLayer, 0, 0);
-        place(cardsLayer, 0, Math.round(240 * kk));
+        place(cardsLayer, 0, Math.round(150 * kk));
         place(status, width - status.getMeasuredWidth(), 0);
         place(platter, 0, Math.round(750 * kk));
         place(tiles, 0, Math.round(790 * kk));
@@ -709,6 +713,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         dHint = Ui.text(Ui.medium, 24 * k, 0x80FFFFFF);
         detailTextKey = "";
         lightGradient = null;
+        darkFade = null;
         buttonPaint = Ui.text(Ui.semibold, 29 * k, INK);
         capsuleText = Ui.numbers(Ui.medium, 29 * k, 0xF2FFFFFF);
         tipPaint = Ui.text(Ui.semibold, 25 * k, 0xF2FFFFFF);
@@ -1300,7 +1305,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
 
     /** Shelf layer: the glass bar and its shadow (it only changes with the background). */
     private void drawPlatter(Canvas c) {
-        if (shelf.isEmpty()) return;
+        if (shelf.isEmpty() || night > 0.999f) return;     // dark: the tiles float on the black, no glass
         float radius = (TILE_RADIUS + SHELF_PAD) * k;
         tmp.set(platterRect);
         tmp.offset(0, 18 * k);
@@ -1477,6 +1482,24 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         } else {
             if (it.tile != null) roundImage(c, it.tile, cell, r);
         }
+        tileEdge(c, cell, r);
+    }
+
+    /**
+     * At night the tiles sit on black with no glass behind them: no outline (Apple never draws one), a faint light from
+     * above instead, so even a black card (Plex) reads as a surface.
+     */
+    private void tileEdge(Canvas c, RectF cell, float r) {
+        if (night < 0.001f) return;
+        if (tileSheen == null) tileSheen = new LinearGradient(0, 0, 0, 1, 0x24FFFFFF, 0x00FFFFFF, Shader.TileMode.CLAMP);
+        unitMatrix.setScale(1, cell.height() * 0.55f);
+        unitMatrix.postTranslate(0, cell.top);
+        tileSheen.setLocalMatrix(unitMatrix);
+        sheen.setShader(tileSheen);
+        sheen.setAlpha(Math.round(255 * night));
+        c.drawRoundRect(cell, r, r, sheen);
+        sheen.setAlpha(255);
+        sheen.setShader(null);
     }
 
     /**
@@ -2242,6 +2265,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             rim.setColor(Ui.alpha(0xFFFFFFFF, 0.6f * fc));
             rim.setStrokeWidth(2.5f * k);
             c.drawRoundRect(cell, r, r, rim);
+        } else {
+            tileEdge(c, cell, r);
         }
     }
 
@@ -3375,6 +3400,19 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         if (fading && bgFrom != null) drawLightImage(c, bgFrom, bgTo == null ? 1 - e : 1);
         if (bgTo != null) drawLightImage(c, bgTo, fading ? e : 1);
         imagePaint.setColorFilter(null);
+        if (night > 0.001f) {
+            // Dark, as on Apple TV: the focused title's color only as a faint glow at the top, fading to true black
+            // (an OLED's pixels off) by the middle of the screen.
+            if (darkFade == null) {
+                darkFade = new LinearGradient(0, 0, 0, h * 0.62f, new int[] {0xB8000000, 0xE6000000, 0xFF000000},
+                        new float[] {0, 0.45f, 1}, Shader.TileMode.CLAMP);
+            }
+            fill.setShader(darkFade);
+            fill.setAlpha(Math.round(255 * night));
+            c.drawRect(screen, fill);
+            fill.setAlpha(255);
+            fill.setShader(null);
+        }
     }
 
     private void drawLightImage(Canvas c, Backdrop b, float alpha) {
@@ -3389,8 +3427,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             if (HomeData.coinCount() > 0) drawQuotes(c);
             return;
         }
-        String hello = tab == TAB_BROWSE && browseGenre >= 0 ? browseName : greeting();
-        c.drawText(hello, MARGIN * k - Ui.leftBearing(lTitle, hello), L_TITLE_BASE * k, lTitle);
+        if (tab == TAB_BROWSE && browseGenre >= 0) c.drawText(browseName, MARGIN * k, 244 * k, lSection);   // the genre, over its grid
         // Text tabs (the selected one in bold, in the main text color); with focus on the tabs, the selected one gets
         // the white pill with a shadow and grows a little (the tvOS focus).
         float focus = Ui.clamp(topFocus[tab].value);
@@ -3419,24 +3456,6 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         if (tab != TAB_BROWSE && tab != TAB_APPS && HomeData.coinCount() > 0) drawQuotes(c);
     }
 
-    private String greeting = "";
-    private long greetingMinute = -1;
-
-    /** "Good morning / afternoon / evening", with your name (config.properties "name"): follows the clock and the language. */
-    private String greeting() {
-        long minute = System.currentTimeMillis() / 60_000L;
-        if (minute != greetingMinute || !greetingLanguage.equals(Ui.language)) {
-            greetingMinute = minute;
-            greetingLanguage = Ui.language;
-            int hour = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY);
-            String text = hour < 5 || hour >= 18 ? Ui.tr("Boa noite", "Good evening", "Buenas noches")
-                    : hour < 12 ? Ui.tr("Bom dia", "Good morning", "Buenos días")
-                    : Ui.tr("Boa tarde", "Good afternoon", "Buenas tardes");
-            greeting = Config.NAME.trim().isEmpty() ? text : text + ", " + Config.NAME.trim();
-        }
-        return greeting;
-    }
-    private String greetingLanguage = "";
 
     /** The carousel (its own layer, so it can scroll away when the apps rise): the cards, and the note when there are none. */
     private void drawLightCards(Canvas c) {
@@ -3826,7 +3845,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
      */
     private void drawFilter(Canvas c) {
         String[] labels = {Ui.tr("Tudo", "All", "Todo"), Ui.tr("Filmes", "Movies", "Películas"), Ui.tr("Séries", "Shows", "Series")};
-        float pad = 28 * k, inset = 5 * k, height = 56 * k, cy = 268 * k, total = 2 * inset;
+        float pad = 28 * k, inset = 5 * k, height = 56 * k, cy = L_FILTER_CY * k, total = 2 * inset;
         for (String label : labels) total += lTab.measureText(label) + 2 * pad;
         float left = MARGIN * k - 26 * k, focus = Ui.clamp(filterFocus.value);
         tmp.set(left, cy - height / 2, left + total, cy + height / 2);
@@ -3916,8 +3935,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         bGap = 24 * k;
         bLeft = MARGIN * k;
         float width = CONTENT_R * k - bLeft;
-        bTop = 312 * k;                     // below the tabs and the All / Movies / Shows control
-        bClipTop = 296 * k;
+        bTop = (browseGenre < 0 ? 226 : 282) * k;     // below the tabs and the filter (and in a genre, its name)
+        bClipTop = D_CLIP * k;
         if (browseGenre < 0) {              // the genres: 4 x 4, all in view
             bTileW = (width - (bCols - 1) * bGap) / bCols;
             bTileH = (1030 * k - bTop - 3 * bGap) / 4;

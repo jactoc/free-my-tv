@@ -1136,7 +1136,7 @@ final class Recs {
         if (p == null) return null;
         String url = p.still != null ? p.still
                 : p.backdrop != null && !p.backdrop.startsWith("plex") ? "https://image.tmdb.org/t/p/w780" + p.backdrop : null;
-        return small(p, "s:", url, 546, 307);     // Home's card, focused (1.05×)
+        return small(p, "s:", url, 672, 378);     // Home's card, focused (1.05×)
     }
 
     private Bitmap small(Pick p, String type, String url, int w, int h) {
