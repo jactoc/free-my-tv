@@ -32,6 +32,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.function.Consumer;
 
 /**
  * Home screen picks ("This morning / afternoon / tonight"): what's trending this week plus recent releases, only from
@@ -51,6 +52,12 @@ final class Recs {
         String plexKey, image;  // a title from your Plex server: its rating key, and the full address of its backdrop
         String summary = "", poster, cast = "", year = "";   // the detail screen: description, poster address, "A, B, C"
         float rating;           // out of 10, 0 = none
+        int tmdb;               // a Plex title's TMDB number (for its trailer); TMDB picks use `id`
+        String discoverId;      // the title's id on Plex's cloud catalog (what the watchlist uses)
+        // Looked up when the detail screen opens (not saved): the YouTube trailer and whether it's on your Plex watchlist.
+        volatile String trailer;
+        volatile int watchlisted = -1;      // -1 not known yet, 0 no, 1 yes
+        volatile boolean lookedUp, lookingUp;
     }
 
     interface Listener { void onRecs(); }
@@ -62,7 +69,7 @@ final class Recs {
     private static final int ANIMATION = 16;
     private static final long LIST_EVERY = 6 * 3600_000L;
     /** Bump when what is saved for each title changes (the saved list is discarded and fetched again). */
-    private static final int CACHE_VERSION = 5;
+    private static final int CACHE_VERSION = 6;
     private static final String PLEX_PKG = "com.plexapp.android";
     private static final int PLEX_MAX = 24;
     /** The carousel's length: every pick gets its details and image fetched in the background. */
@@ -122,6 +129,8 @@ final class Recs {
     private final Context context;
     private final SharedPreferences cache;
     private final ExecutorService io = Executors.newSingleThreadExecutor();
+    /** The detail screen (poster, trailer, watchlist): its own thread, so it never waits behind the picks' images. */
+    private final ExecutorService detailIo = Executors.newSingleThreadExecutor();
     private final Handler main = new Handler(Looper.getMainLooper());
     private final List<Listener> listeners = new ArrayList<>();
     private final Map<String, Backdrop> images = new LinkedHashMap<>();   // this hour's, built and ready to draw
@@ -396,6 +405,107 @@ final class Recs {
         return out;
     }
 
+    // MARK: - Trailer and Plex watchlist (looked up when the detail screen opens)
+
+    private static final String PLEX_DISCOVER = "https://discover.provider.plex.tv", PLEX_METADATA = "https://metadata.provider.plex.tv";
+
+    /** Finds the trailer's YouTube id, the title's id in Plex's catalog (if it isn't from your server) and its watchlist state. */
+    void lookup(Pick p) {
+        if (p == null || p.lookedUp || p.lookingUp) return;
+        p.lookingUp = true;
+        detailIo.execute(() -> {
+            try {
+                int tmdbId = p.plexKey != null ? p.tmdb : p.id;
+                if (tmdbId > 0) p.trailer = trailer(p.kind, tmdbId);
+                if (plexOn()) {
+                    if (p.discoverId == null) p.discoverId = resolveDiscover(p);
+                    if (p.discoverId != null) p.watchlisted = watchlistState(p.discoverId) ? 1 : 0;
+                }
+                p.lookedUp = true;
+            } catch (Exception e) {
+                AppLog.w("lookup: " + (e.getMessage() == null ? e.toString() : e.getMessage()));
+            } finally {
+                p.lookingUp = false;
+                notifyListeners();
+            }
+        });
+    }
+
+    /** The best YouTube trailer TMDB knows: an official "Trailer", else a "Teaser"; null if none. */
+    private String trailer(String kind, int id) throws Exception {
+        JSONArray videos = get("/" + kind + "/" + id + "/videos?language=" + lang() + "&include_video_language=" + lang() + ",en,null").getJSONArray("results");
+        String best = null;
+        int bestRank = Integer.MAX_VALUE;
+        for (int i = 0; i < videos.length(); i++) {
+            JSONObject v = videos.getJSONObject(i);
+            if (!v.optString("site").equals("YouTube")) continue;
+            int rank = (v.optString("type").equals("Trailer") ? 0 : v.optString("type").equals("Teaser") ? 4 : 99) + (v.optBoolean("official") ? 0 : 2);
+            if (rank < bestRank) {
+                bestRank = rank;
+                best = v.optString("key");
+            }
+        }
+        return bestRank < 99 ? best : null;
+    }
+
+    /** The title's id on Plex's catalog, searched by name, kind and year (a title from your server already has it). */
+    private String resolveDiscover(Pick p) throws Exception {
+        String url = PLEX_DISCOVER + "/library/search?query=" + URLEncoder.encode(p.title, "UTF-8")
+                + "&limit=8&searchTypes=movies,tv&searchProviders=discover&includeMetadata=1";
+        JSONArray groups = plexCloud("GET", url).getJSONObject("MediaContainer").optJSONArray("SearchResults");
+        String type = p.kind.equals("movie") ? "movie" : "show";
+        for (int g = 0; groups != null && g < groups.length(); g++) {
+            JSONArray results = groups.getJSONObject(g).optJSONArray("SearchResult");
+            for (int i = 0; results != null && i < results.length(); i++) {
+                JSONObject m = results.getJSONObject(i).optJSONObject("Metadata");
+                if (m == null || !type.equals(m.optString("type")) || !m.optString("title").equalsIgnoreCase(p.title)) continue;
+                if (p.year.isEmpty() || p.year.equals(m.optString("year"))) return m.optString("ratingKey");
+            }
+        }
+        return null;
+    }
+
+    private boolean watchlistState(String id) throws Exception {
+        JSONObject state = plexCloud("GET", PLEX_METADATA + "/library/metadata/" + id + "/userState").getJSONObject("MediaContainer").optJSONObject("UserState");
+        return state != null && state.has("watchlistedAt");
+    }
+
+    /** Adds or removes the title on your Plex watchlist (your plex.tv account's, shared by all your Plex apps). */
+    void watchlist(Pick p, boolean add, Consumer<Boolean> done) {
+        detailIo.execute(() -> {
+            boolean ok = false;
+            try {
+                plexCloud("PUT", PLEX_DISCOVER + "/actions/" + (add ? "addToWatchlist" : "removeFromWatchlist") + "?ratingKey=" + p.discoverId);
+                p.watchlisted = add ? 1 : 0;
+                ok = true;
+            } catch (Exception e) {
+                AppLog.w("watchlist: " + (e.getMessage() == null ? e.toString() : e.getMessage()));
+            }
+            final boolean result = ok;
+            main.post(() -> done.accept(result));
+            notifyListeners();
+        });
+    }
+
+    /** A call to plex.tv's cloud (always https) with your Plex token; returns the JSON, or an empty object for an empty answer. */
+    private static JSONObject plexCloud(String method, String url) throws IOException, org.json.JSONException {
+        HttpURLConnection c = (HttpURLConnection) new URL(url).openConnection();
+        c.setRequestMethod(method);
+        c.setConnectTimeout(6000);
+        c.setReadTimeout(10000);
+        c.setRequestProperty("Accept", "application/json");
+        c.setRequestProperty("X-Plex-Token", Config.PLEX_TOKEN.trim());
+        try {
+            int code = c.getResponseCode();
+            if (code == 401) throw new IOException("Plex rejected the token");
+            if (code / 100 != 2) throw new IOException("Plex cloud returned HTTP " + code);
+            String body = read(c.getInputStream()).trim();
+            return body.isEmpty() ? new JSONObject() : new JSONObject(body);
+        } finally {
+            c.disconnect();
+        }
+    }
+
     // MARK: - Posters (the detail screen: one at a time, from TMDB or your Plex server)
 
     private final Map<String, Bitmap> posters = new LinkedHashMap<>();
@@ -410,7 +520,7 @@ final class Recs {
             if (b != null) return b;
             if (posterFailed.contains(key) || !posterPending.add(key)) return null;
         }
-        io.execute(() -> {
+        detailIo.execute(() -> {
             boolean ok = false;
             try {
                 File dir = new File(context.getCacheDir(), "recs");
@@ -526,7 +636,7 @@ final class Recs {
 
     // MARK: - Plex (your own server: its newest unwatched movies and shows; the token only travels as a header)
 
-    private static boolean plexOn() {
+    static boolean plexOn() {
         return !Config.PLEX_URL.trim().isEmpty() && !Config.PLEX_TOKEN.trim().isEmpty();
     }
 
@@ -562,7 +672,7 @@ final class Recs {
             if (!type.equals("movie") && !type.equals("show")) continue;
             boolean movie = type.equals("movie");
             JSONArray items = plexGet("/library/sections/" + section.getString("key") + "/all?type=" + (movie ? 1 : 2)
-                    + "&unwatched=1&sort=addedAt:desc&X-Plex-Container-Start=0&X-Plex-Container-Size=20").optJSONArray("Metadata");
+                    + "&unwatched=1&includeGuids=1&sort=addedAt:desc&X-Plex-Container-Start=0&X-Plex-Container-Size=20").optJSONArray("Metadata");
             for (int j = 0; items != null && j < items.length(); j++) {
                 Pick p = plexPick(items.getJSONObject(j), movie ? "movie" : "tv", machine);
                 if (p != null) (movie ? movies : shows).add(p);
@@ -592,6 +702,13 @@ final class Recs {
         p.app = "plex";
         p.pkg = PLEX_PKG;
         p.summary = o.optString("summary");
+        String guid = o.optString("guid");      // "plex://movie/6328b12f...": the last part is the cloud catalog's id
+        if (guid.startsWith("plex://")) p.discoverId = guid.substring(guid.lastIndexOf('/') + 1);
+        JSONArray guids = o.optJSONArray("Guid");
+        for (int i = 0; guids != null && i < guids.length(); i++) {
+            String id = guids.getJSONObject(i).optString("id");
+            if (id.startsWith("tmdb://")) p.tmdb = Integer.parseInt(id.substring(7));
+        }
         String thumb = o.optString("thumb", "");
         if (!thumb.isEmpty()) {
             p.poster = plexBase() + "/photo/:/transcode?width=480&height=720&minSize=1&upscale=1&url=" + URLEncoder.encode(thumb, "UTF-8");
@@ -989,7 +1106,8 @@ final class Recs {
                         .put("meta", p.meta).put("app", p.app == null ? "" : p.app).put("pkg", p.pkg == null ? "" : p.pkg)
                         .put("detailed", p.detailed).put("plexKey", p.plexKey == null ? "" : p.plexKey)
                         .put("image", p.image == null ? "" : p.image).put("summary", p.summary).put("poster", p.poster == null ? "" : p.poster)
-                        .put("cast", p.cast).put("year", p.year).put("rating", p.rating));
+                        .put("cast", p.cast).put("year", p.year).put("rating", p.rating)
+                        .put("tmdb", p.tmdb).put("discoverId", p.discoverId == null ? "" : p.discoverId));
             }
             SharedPreferences.Editor e = cache.edit().putString("picks", a.toString()).putInt("period", period).putLong("listAt", listAt)
                     .putString("language", listLanguage)
@@ -1025,6 +1143,8 @@ final class Recs {
             p.cast = o.optString("cast");
             p.year = o.optString("year");
             p.rating = (float) o.optDouble("rating", 0);
+            p.tmdb = o.optInt("tmdb");
+            p.discoverId = o.optString("discoverId").isEmpty() ? null : o.optString("discoverId");
             out.add(p);
         }
         return out;

@@ -150,7 +150,11 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private final Spring detail = new Spring(0.34f, 0.9f, 0);
     private boolean detailOpen, detailDirty;
     private Recs.Pick detailPick;
-    private final RectF detailButton = new RectF(), posterRect = new RectF();
+    private final RectF posterRect = new RectF();
+    // Watch / Trailer / Watchlist: left and right move between them, OK presses the focused one.
+    private final RectF[] detailButtons = {new RectF(), new RectF(), new RectF()};
+    private final Spring[] btnFocus = {new Spring(0.26f, 0.85f, 1), new Spring(0.26f, 0.85f, 0), new Spring(0.26f, 0.85f, 0)};
+    private int detailBtn;
     private StaticLayout detailText;
     private String detailTextKey = "";
     private Paint dTitle, dMeta, dBody, dButton, dHint;
@@ -669,7 +673,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         boolean drawerItemsMoving = step(drawerFocus, dt);
         boolean gridMoving = step(gridFocus, dt) | scroll.step(dt);
         boolean drawerMoving = drawer.step(dt);
-        boolean sheetMoving = sheet.step(dt), detailMoving = detail.step(dt);
+        boolean sheetMoving = sheet.step(dt), detailMoving = detail.step(dt) | step(btnFocus, dt);
         boolean toastFading = tickToast(up);
         boolean heroFading = tickHeroFade(up);
         boolean bgFading = tickBackgroundFade(up);
@@ -1820,9 +1824,25 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         detailOpen = true;
         detailTextKey = "";
         detail.target = 1;
+        detailBtn = 0;
+        aimButtons(true);
         detailDirty = true;
         recs.poster(p);
+        recs.lookup(p);     // the trailer and the Plex watchlist state
         retarget(false);
+        wake();
+    }
+
+    private int detailCount() {
+        return Recs.plexOn() ? 3 : 2;
+    }
+
+    private void aimButtons(boolean snap) {
+        for (int i = 0; i < btnFocus.length; i++) {
+            btnFocus[i].target = i == detailBtn ? 1 : 0;
+            if (snap) btnFocus[i].snap(btnFocus[i].target);
+        }
+        detailDirty = true;
         wake();
     }
 
@@ -1837,9 +1857,39 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         if (p == null || p.pkg == null) return;
         click.open();
         HomeApps.Item it = HomeApps.app(p.pkg, Recs.serviceName(p), p.link);
-        boolean opened = HomeApps.open(activity, it, this, Math.round(detailButton.left), Math.round(detailButton.top),
-                Math.round(detailButton.width()), Math.round(detailButton.height()));
+        RectF r = detailButtons[0];
+        boolean opened = HomeApps.open(activity, it, this, Math.round(r.left), Math.round(r.top), Math.round(r.width()), Math.round(r.height()));
         if (!opened) showToast(Ui.tr("Não deu para abrir ", "Couldn't open ") + it.label + ".");
+    }
+
+    /** The trailer in the YouTube app: the video TMDB knows, or a YouTube search for it. */
+    private void trailerDetail() {
+        Recs.Pick p = detailPick;
+        if (p == null) return;
+        String url = p.trailer != null ? "https://www.youtube.com/watch?v=" + p.trailer
+                : "https://www.youtube.com/results?search_query=" + android.net.Uri.encode(p.title + " " + p.year + " trailer");
+        HomeApps.Item it = HomeApps.app("com.google.android.youtube.tv", "YouTube", url);
+        RectF r = detailButtons[1];
+        boolean opened = HomeApps.open(activity, it, this, Math.round(r.left), Math.round(r.top), Math.round(r.width()), Math.round(r.height()));
+        if (!opened) showToast(Ui.tr("Não deu para abrir o YouTube.", "Couldn't open YouTube."));
+    }
+
+    private void toggleWatchlist() {
+        Recs.Pick p = detailPick;
+        if (p == null) return;
+        if (p.discoverId == null) {
+            showToast(p.lookingUp ? Ui.tr("Consultando o Plex…", "Checking Plex…")
+                    : Ui.tr("Título não encontrado no Plex", "Not found in Plex's catalog"));
+            return;
+        }
+        final boolean add = p.watchlisted != 1;
+        recs.watchlist(p, add, ok -> {
+            detailDirty = true;
+            wake();
+            showToast(!ok ? Ui.tr("Não deu para atualizar a lista", "Couldn't update the watchlist")
+                    : add ? Ui.tr("Adicionado à sua lista do Plex", "Added to your Plex watchlist")
+                    : Ui.tr("Removido da sua lista do Plex", "Removed from your Plex watchlist"));
+        });
     }
 
     private void drawDetail(Canvas c) {
@@ -1892,28 +1942,60 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             String cast = Ui.tr("Com ", "With ") + p.cast;
             c.drawText(TextUtils.ellipsize(cast, fitPaint, width, TextUtils.TruncateAt.END).toString(), x, top + 560 * k, dMeta);
         }
-        // The one button, always focused: white pill, play triangle and "Watch on <app>".
+        // The buttons: the focused one is a white pill with dark text, the others a faint glass pill with white text.
         String service = Recs.serviceName(p);
-        String label = Ui.tr("Assistir no ", "Watch on ") + (service.isEmpty() ? "app" : service);
-        float bh = 100 * k, bw = dButton.measureText(label) + 160 * k, by = top + 620 * k;
-        detailButton.set(x, by, x + bw, by + bh);
-        tmp.set(detailButton);
-        tmp.offset(0, 10 * k);
-        shadowDeep.setColor(0x66000000);
-        shadows.draw(c, tmp, bh / 2, DEEP_BLUR * k, shadowDeep);
-        fill.setShader(null);
-        fill.setColor(0xFFFFFFFF);
-        c.drawRoundRect(detailButton, bh / 2, bh / 2, fill);
-        float tx = x + 52 * k, cy = detailButton.centerY(), tri = 17 * k;
-        playTriangle.reset();
-        playTriangle.moveTo(tx, cy - tri);
-        playTriangle.lineTo(tx + tri * 1.7f, cy);
-        playTriangle.lineTo(tx, cy + tri);
-        playTriangle.close();
-        fill.setColor(L_INK);
-        c.drawPath(playTriangle, fill);
-        c.drawText(label, tx + tri * 1.7f + 28 * k, cy + Ui.halfCap(dButton), dButton);
-        c.drawText(Ui.tr("Voltar para fechar", "Back to close"), x, detailButton.bottom + 56 * k, dHint);
+        String[] labels = {Ui.tr("Assistir no ", "Watch on ") + (service.isEmpty() ? "app" : service), "Trailer",
+                p.watchlisted == 1 ? Ui.tr("Na lista", "In watchlist") : Ui.tr("Minha lista", "Watchlist")};
+        float bh = 100 * k, by = top + 620 * k, bx = x, iconW = 40 * k;
+        for (int i = 0; i < detailCount(); i++) {
+            float f = Ui.clamp(btnFocus[i].value), grow = 1 + 0.04f * f;
+            float bw = 48 * k + iconW + 22 * k + dButton.measureText(labels[i]) + 52 * k;
+            detailButtons[i].set(bx, by, bx + bw, by + bh);
+            cell.set(bx + bw / 2 - bw * grow / 2, by + bh / 2 - bh * grow / 2, bx + bw / 2 + bw * grow / 2, by + bh / 2 + bh * grow / 2);
+            if (f > 0.02f) {
+                tmp.set(cell);
+                tmp.offset(0, 10 * k);
+                shadowDeep.setColor(Ui.alpha(0xFF000000, 0.4f * f));
+                shadows.drawCached(c, tmp, bh / 2, DEEP_BLUR * k, shadowDeep);
+            }
+            fill.setShader(null);
+            fill.setColor(blend(0x38FFFFFF, 0xFFFFFFFF, f));
+            c.drawRoundRect(cell, cell.height() / 2, cell.height() / 2, fill);
+            int ink = blend(0xFFFFFFFF, L_INK, f);
+            float ix = cell.left + 48 * k * grow + iconW / 2, cy = cell.centerY();
+            fill.setColor(ink);
+            if (i == 0) {
+                float tri = 17 * k;
+                playTriangle.reset();
+                playTriangle.moveTo(ix - tri * 0.7f, cy - tri);
+                playTriangle.lineTo(ix + tri * 1.0f, cy);
+                playTriangle.lineTo(ix - tri * 0.7f, cy + tri);
+                playTriangle.close();
+                c.drawPath(playTriangle, fill);
+            } else if (i == 1) {      // a film frame with a small play triangle cut out of it
+                tmp.set(ix - 20 * k, cy - 15 * k, ix + 20 * k, cy + 15 * k);
+                c.drawRoundRect(tmp, 7 * k, 7 * k, fill);
+                fill.setColor(blend(0x38FFFFFF, 0xFFFFFFFF, f));
+                float t = 7.5f * k;
+                playTriangle.reset();
+                playTriangle.moveTo(ix - t * 0.6f, cy - t);
+                playTriangle.lineTo(ix + t, cy);
+                playTriangle.lineTo(ix - t * 0.6f, cy + t);
+                playTriangle.close();
+                c.drawPath(playTriangle, fill);
+            } else if (p.watchlisted == 1) {
+                Symbols.draw(getContext(), c, "check", ix, cy, 34 * k, ink);
+            } else {
+                tmp.set(ix - 15 * k, cy - 2.5f * k, ix + 15 * k, cy + 2.5f * k);
+                c.drawRoundRect(tmp, 2.5f * k, 2.5f * k, fill);
+                tmp.set(ix - 2.5f * k, cy - 15 * k, ix + 2.5f * k, cy + 15 * k);
+                c.drawRoundRect(tmp, 2.5f * k, 2.5f * k, fill);
+            }
+            dButton.setColor(ink);
+            c.drawText(labels[i], cell.left + (48 * k + iconW + 22 * k) * grow, cy + Ui.halfCap(dButton), dButton);
+            bx += bw + 24 * k;
+        }
+        c.drawText(Ui.tr("Voltar para fechar", "Back to close"), x, by + bh + 56 * k, dHint);
     }
 
     private void drawSheet(Canvas c) {
@@ -2163,7 +2245,15 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     }
 
     private void move(int dx, int dy) {
-        if (detailOpen) return;     // the detail screen has a single button
+        if (detailOpen) {
+            int next = Math.max(0, Math.min(detailCount() - 1, detailBtn + dx));
+            if (dx != 0 && next != detailBtn) {
+                detailBtn = next;
+                aimButtons(false);
+                click.move();
+            }
+            return;
+        }
         if (sheetOpen) {
             moveGrid(dx, dy);
             return;
@@ -2284,7 +2374,10 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private void activate() {
         wake();
         if (detailOpen) {
-            playDetail();
+            click.open();
+            if (detailBtn == 0) playDetail();
+            else if (detailBtn == 1) trailerDetail();
+            else toggleWatchlist();
             return;
         }
         if (reordering) {   // TalkBack's click while moving an app: drop it
