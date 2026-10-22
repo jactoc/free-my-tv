@@ -21,6 +21,9 @@ final class German {
             case "Crypto": return "Krypto";
             case "24h change": return "Änderung in 24 h";
             case "All": return "Alle";
+            case "Movies": return "Filme";
+            case "Shows": return "Serien";
+            case "Play on ": return "Abspielen auf ";
             case "Good morning": return "Guten Morgen";
             case "Good afternoon": return "Guten Tag";
             case "Good evening": return "Guten Abend";

@@ -60,6 +60,8 @@ final class Recs {
         volatile boolean lookedUp, lookingUp;
         volatile boolean detailing;     // its details are being fetched (Browse lists load them as you scroll)
         String ratingLabel;             // "★ 8.4", made once by the home screen
+        float progress;                 // Continue Watching: how far in you are (0 to 1), 0 = not started
+        String showKey;                 // an episode's show (its Plex key), for the show's TMDB number
     }
 
     interface Listener { void onRecs(); }
@@ -693,6 +695,131 @@ final class Recs {
         });
     }
 
+    // MARK: - Continue watching (what you have started on your Plex server: your account's, not the server's)
+
+    private final List<Pick> continuePicks = new ArrayList<>();
+    private long continueAt;
+    private volatile boolean continueLoading;
+
+    /** The titles in progress, most recent first (empty without Plex, or when nothing is started). */
+    List<Pick> continueList() {
+        synchronized (continuePicks) { return new ArrayList<>(continuePicks); }
+    }
+
+    void refreshContinueNow() {
+        continueAt = 0;
+        refreshContinue();
+    }
+
+    /** Asks Plex again (not more than every 45 seconds); the listeners are told if something changed. */
+    void refreshContinue() {
+        if (!plexOn() || !installed(PLEX_PKG) || continueLoading) return;
+        if (System.currentTimeMillis() - continueAt < 45_000L) return;
+        continueLoading = true;
+        detailIo.execute(() -> {
+            try {
+                String machine = plexGet("/identity").getString("machineIdentifier");
+                JSONArray hubs = plexGet("/hubs/continueWatching?count=30&includeGuids=1").optJSONArray("Hub");
+                List<Pick> fresh = new ArrayList<>();
+                for (int h = 0; hubs != null && h < hubs.length(); h++) {
+                    JSONArray items = hubs.getJSONObject(h).optJSONArray("Metadata");
+                    for (int i = 0; items != null && i < items.length(); i++) {
+                        Pick p = continuePick(items.getJSONObject(i), machine);
+                        if (p != null) fresh.add(p);
+                    }
+                }
+                boolean changed;
+                synchronized (continuePicks) {
+                    changed = fresh.size() != continuePicks.size();
+                    List<Pick> merged = new ArrayList<>();
+                    for (int i = 0; i < fresh.size(); i++) {
+                        Pick f = fresh.get(i), old = null;
+                        for (Pick o : continuePicks) if (key(o).equals(key(f))) old = o;
+                        if (old == null) {
+                            merged.add(f);
+                            changed = true;
+                        } else {        // the same title: its card stays, with the new progress
+                            if (old.progress != f.progress || !old.meta.equals(f.meta)) changed = true;
+                            old.progress = f.progress;
+                            old.meta = f.meta;
+                            merged.add(old);
+                        }
+                    }
+                    for (int i = 0; i < merged.size() && !changed; i++) changed = !key(merged.get(i)).equals(key(continuePicks.get(i)));
+                    continuePicks.clear();
+                    continuePicks.addAll(merged);
+                }
+                continueAt = System.currentTimeMillis();
+                if (changed) notifyListeners();
+            } catch (Exception e) {
+                continueAt = System.currentTimeMillis();
+                AppLog.w("continue: " + (e.getMessage() == null ? e.toString() : e.getMessage()));
+            } finally {
+                continueLoading = false;
+            }
+        });
+    }
+
+    /** A movie or an episode in progress as a pick: the show's art and name, the episode in the details. */
+    private static Pick continuePick(JSONObject o, String machine) throws Exception {
+        String type = o.optString("type");
+        boolean episode = type.equals("episode");
+        if (!episode && !type.equals("movie")) return null;
+        String rating = o.optString("ratingKey");
+        String art = episode ? o.optString("grandparentArt", o.optString("art")) : o.optString("art");
+        if (rating.isEmpty() || art.isEmpty()) return null;
+        Pick p = new Pick();
+        p.id = o.optInt("ratingKey");
+        p.kind = episode ? "tv" : "movie";
+        p.title = episode ? o.optString("grandparentTitle") : o.optString("title");
+        p.plexKey = rating;
+        p.backdrop = "plex" + rating + "-" + Integer.toHexString(art.hashCode()) + ".jpg";
+        p.image = plexBase() + "/photo/:/transcode?width=" + Backdrop.W + "&height=" + Backdrop.H + "&minSize=1&upscale=1&url="
+                + URLEncoder.encode(art, "UTF-8");
+        String thumb = episode ? o.optString("grandparentThumb") : o.optString("thumb");
+        if (!thumb.isEmpty()) {
+            p.poster = plexBase() + "/photo/:/transcode?width=480&height=720&minSize=1&upscale=1&url=" + URLEncoder.encode(thumb, "UTF-8");
+        }
+        p.link = plexPlayLink(machine, rating);
+        p.app = "plex";
+        p.pkg = PLEX_PKG;
+        p.detailed = true;
+        p.summary = o.optString("summary");
+        p.year = o.optString("year");
+        String guid = episode ? o.optString("grandparentGuid") : o.optString("guid");
+        if (guid.startsWith("plex://")) p.discoverId = guid.substring(guid.lastIndexOf('/') + 1);
+        if (episode) p.showKey = o.optString("grandparentRatingKey");
+        JSONArray guids = o.optJSONArray("Guid");
+        for (int i = 0; !episode && guids != null && i < guids.length(); i++) {
+            String id = guids.getJSONObject(i).optString("id");
+            if (id.startsWith("tmdb://")) p.tmdb = Integer.parseInt(id.substring(7));
+        }
+        long duration = o.optLong("duration"), offset = o.optLong("viewOffset");
+        p.progress = duration > 0 ? Math.max(0, Math.min(1, offset / (float) duration)) : 0;
+        int minutes = duration > 0 ? (int) Math.max(1, (duration - offset) / 60_000L) : 0;
+        List<String> parts = new ArrayList<>();
+        if (episode) {
+            parts.add(Ui.tr("T", "S") + o.optInt("parentIndex") + " · " + Ui.tr("E", "E") + o.optInt("index"));
+            String name = o.optString("title");
+            if (!name.isEmpty()) parts.add(name);
+        }
+        if (minutes > 0) parts.add(Ui.tr(minutes >= 60 ? (minutes / 60) + " h " + (minutes % 60) + " min restantes" : minutes + " min restantes",
+                minutes >= 60 ? (minutes / 60) + "h " + (minutes % 60) + "m left" : minutes + " min left"));
+        p.meta = String.join(" · ", parts);
+        return p;
+    }
+
+    /** The TMDB number of a show on your server (for its trailer), from its Plex key. */
+    private int plexTmdb(String key) throws Exception {
+        JSONArray meta = plexGet("/library/metadata/" + key + "?includeGuids=1").optJSONArray("Metadata");
+        JSONArray guids = meta == null || meta.length() == 0 ? null : meta.getJSONObject(0).optJSONArray("Guid");
+        for (int i = 0; guids != null && i < guids.length(); i++) {
+            String id = guids.getJSONObject(i).optString("id");
+            if (id.startsWith("tmdb://")) return Integer.parseInt(id.substring(7));
+        }
+        return 0;
+    }
+
     // MARK: - Trailer and Plex watchlist (looked up when the detail screen opens)
 
     private static final String PLEX_DISCOVER = "https://discover.provider.plex.tv", PLEX_METADATA = "https://metadata.provider.plex.tv";
@@ -703,6 +830,7 @@ final class Recs {
         p.lookingUp = true;
         detailIo.execute(() -> {
             try {
+                if (p.plexKey != null && p.tmdb == 0 && p.showKey != null && !p.showKey.isEmpty()) p.tmdb = plexTmdb(p.showKey);
                 int tmdbId = p.plexKey != null ? p.tmdb : p.id;
                 if (tmdbId > 0) p.trailer = trailer(p.kind, tmdbId);
                 if (plexOn()) {
