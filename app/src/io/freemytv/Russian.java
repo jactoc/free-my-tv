@@ -27,6 +27,7 @@ final class Russian {
             case "Sunset ": return "Закат ";
             case "Crypto": return "Криптовалюты";
             case "24h change": return "изменение за 24 ч";
+            case "All": return "Все";
             case "Good morning": return "Доброе утро";
             case "Good afternoon": return "Добрый день";
             case "Good evening": return "Добрый вечер";

@@ -105,7 +105,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private static final String[] TAB_KIND = {null, "movie", "tv", "browse"};
     /** Tabs on the left (Explore, Movies, Shows, Browse); the round buttons on the right take the indices after them. */
     private static final int TABS_N = 4, TAB_BROWSE = 3;
-    private static final int Z_TOP = 4, Z_CARDS = 5;
+    private static final int Z_TOP = 4, Z_CARDS = 5, Z_FILTER = 10;     // Z_FILTER: All / Movies / Shows in Browse
 
     private final Activity activity;
     private final Scene scene = new Scene();
@@ -142,6 +142,9 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private int tab, topIndex, cardIndex;
     // Browse tab: the genres first; OK on one shows its titles (browseGenre >= 0) and Back returns to the genres.
     private int browseGenre = -1, browseReturn;
+    private String browseKind;      // Browse shows all titles (null), only movies ("movie") or only shows ("tv")
+    private final Spring filterFocus = new Spring(0.26f, 0.85f, 0);
+    private final RectF[] filterRects = {new RectF(), new RectF(), new RectF()};
     private String browseName = "";
     private Paint gLabel, dChip;
     // Browse is a full-screen grid (the genres 4 x 4; a title's poster grid 7 wide): its geometry, the animated selection
@@ -387,6 +390,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         recs = Recs.get(a);
         click = new Click(a);
         ui = a.getSharedPreferences("home-ui", Context.MODE_PRIVATE);
+        String savedKind = ui.getString("browseKind", "");
+        browseKind = savedKind.equals("movie") || savedKind.equals("tv") ? savedKind : null;
         tvInputs = (TvInputManager) a.getSystemService(Context.TV_INPUT_SERVICE);
         setFocusable(true);
         sky = new Layer(a, SKY);
@@ -695,7 +700,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         if (reorderAnim) tilesMoving |= stepReorder(dt, up);
         boolean statusMoving = step(statusFocus, dt);
         boolean heroMoving = heroFocus.step(dt);
-        boolean topMoving = step(topFocus, dt), cardsMoving = cardPos.step(dt) | cardActive.step(dt);
+        boolean topMoving = step(topFocus, dt), cardsMoving = cardPos.step(dt) | cardActive.step(dt) | filterFocus.step(dt);
         if (topMoving) status.invalidate();
         heroMoving |= topMoving | cardsMoving;
         boolean drawerItemsMoving = step(drawerFocus, dt);
@@ -1782,6 +1787,10 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         heroChanged |= cardActive.target != active || cardPos.target != cardIndex;
         cardActive.target = active;
         cardPos.target = cardIndex;
+        float filterActive = !sheetOpen && !detailOpen && zone == Z_FILTER ? 1 : 0;
+        heroChanged |= filterFocus.target != filterActive;
+        filterFocus.target = filterActive;
+        if (snap) filterFocus.snap(filterActive);
         if (snap) {
             cardActive.snap(active);
             cardPos.snap(cardIndex);
@@ -2273,8 +2282,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             closeDetail();
         } else if (browseGenre >= 0) {
             leaveGenre();
-        } else if (tab == TAB_BROWSE && zone == Z_CARDS) {
-            zone = Z_TOP;       // up from the genres to the tabs
+        } else if (tab == TAB_BROWSE && (zone == Z_CARDS || zone == Z_FILTER)) {
+            zone = Z_TOP;       // up from the grid (or its filter) to the tabs
             topIndex = tab;
             retarget(false);
         } else if (tab == TAB_BROWSE && zone != Z_DRAWER && zone != WIDGETS && !sheetOpen) {
@@ -2460,6 +2469,13 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             }
             it = lightButtons.get(topIndex - TABS_N);
             r = topRects[topIndex];
+        } else if (zone == Z_FILTER) {
+            if (!cards.isEmpty()) {     // OK on the filter goes down to the grid
+                zone = Z_CARDS;
+                retarget(false);
+                click.move();
+            }
+            return;
         } else if (zone == Z_CARDS) {
             Recs.Pick p = cardIndex < cards.size() ? cards.get(cardIndex) : null;
             if (p == null) return;
@@ -2941,7 +2957,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     /** The three cards of the current tab (Explore, Movies, Shows) and the background taken from the first one. */
     private void updateCards() {
         List<Recs.Pick> list = tab != TAB_BROWSE ? recs.all(TAB_KIND[tab])
-                : browseGenre < 0 ? recs.genreCards() : recs.genreList(browseGenre);
+                : browseGenre < 0 ? recs.genreCards() : recs.genreList(browseGenre, browseKind);
         if (!samePicks(list, cards)) {
             cards = list;
             cardIndex = Math.min(cardIndex, Math.max(0, list.size() - 1));
@@ -2992,7 +3008,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         browseReturn = cardIndex;
         browseGenre = genre.id;
         browseName = genre.title;
-        recs.loadGenre(browseGenre);
+        recs.loadGenre(browseGenre, browseKind);
         cardIndex = 0;
         cardPos.snap(0);
         browseScroll.snap(0);       // a new genre starts at its first row
@@ -3101,6 +3117,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             if (i == tab) lTabOn.setColor(blend(tone(L_INK, WHITE), L_INK, focus));   // always dark on the white pill
             c.drawText(tabs()[i], r.centerX() - p.measureText(tabs()[i]) / 2, r.centerY() + Ui.halfCap(p), p);
         }
+        if (tab == TAB_BROWSE) drawFilter(c);
         layoutCards();
         int n = tab == TAB_BROWSE ? 0 : Math.min(cards.size(), MAX_CARDS);
         int top = n == 0 ? -1 : Math.max(0, Math.min(n - 1, Math.round(cardPos.value)));
@@ -3111,7 +3128,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         if (top >= 0) drawLightCard(c, top);
         c.restore();
         if (cards.isEmpty() && tab == TAB_BROWSE) {
-            String note = browseGenre >= 0 && !recs.genreLoading(browseGenre)
+            String note = browseGenre >= 0 && !recs.genreLoading(browseGenre, browseKind)
                     ? Ui.tr("Nada disponível nos seus apps ou no Plex", "Nothing here on your apps or Plex")
                     : Ui.tr("Carregando…", "Loading…");
             c.drawText(note, MARGIN * k, (L_CARDS_TOP + 70) * k, lCardMeta);
@@ -3266,6 +3283,84 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
 
     // MARK: - Browse: full-screen grids
 
+    /** A small dark pill with white text (the service a title is on, its rating). */
+    private void chip(Canvas c, String text, float x, float y) {
+        float cw = dChip.measureText(text) + 22 * k, ch = 34 * k;
+        tmp.set(x, y, x + cw, y + ch);
+        fill.setShader(null);
+        fill.setColor(0xCC000000);
+        c.drawRoundRect(tmp, ch / 2, ch / 2, fill);
+        c.drawText(text, x + 11 * k, tmp.centerY() + Ui.halfCap(dChip), dChip);
+    }
+
+    private int browseKindIndex() {
+        return browseKind == null ? 0 : browseKind.equals("movie") ? 1 : 2;
+    }
+
+    /** All / Movies / Shows on the heading row, left of the round buttons; the focused one is the white pill, like the tabs. */
+    private void drawFilter(Canvas c) {
+        String[] labels = {Ui.tr("Tudo", "All", "Todo"), tabs()[1], tabs()[2]};
+        float pad = 26 * k, height = 58 * k, cy = L_BUTTON_CY * k, gap = 4 * k, total = gap * 2;
+        for (String label : labels) total += Math.max(lTabOn.measureText(label), lTab.measureText(label)) + 2 * pad;
+        float x = topRects[TABS_N].left - 44 * k - total, focus = Ui.clamp(filterFocus.value);
+        int selected = browseKindIndex();
+        for (int i = 0; i < 3; i++) {
+            float width = Math.max(lTabOn.measureText(labels[i]), lTab.measureText(labels[i])) + 2 * pad;
+            filterRects[i].set(x, cy - height / 2, x + width, cy + height / 2);
+            if (i == selected && focus > 0.01f) {
+                float scale = 1 + 0.05f * focus;
+                cell.set(filterRects[i].centerX() - width * scale / 2, cy - height * scale / 2, filterRects[i].centerX() + width * scale / 2, cy + height * scale / 2);
+                tmp.set(cell);
+                tmp.offset(0, 8 * k * focus);
+                shadow.setColor(Ui.alpha(0xFF000000, tone(0.22f, 0.4f) * focus));
+                shadows.draw(c, tmp, cell.height() / 2, SHADOW_BLUR * k, shadow);
+                fill.setShader(null);
+                fill.setColor(Ui.alpha(0xFFFFFFFF, focus));
+                c.drawRoundRect(cell, cell.height() / 2, cell.height() / 2, fill);
+            }
+            Paint paint = i == selected ? lTabOn : lTab;
+            if (i == selected) lTabOn.setColor(blend(tone(L_INK, WHITE), L_INK, focus));
+            c.drawText(labels[i], filterRects[i].centerX() - paint.measureText(labels[i]) / 2, cy + Ui.halfCap(paint), paint);
+            x += width + gap;
+        }
+    }
+
+    private boolean moveFilter(int dx, int dy) {
+        if (dy < 0) {
+            zone = Z_TOP;
+            topIndex = tab;
+        } else if (dy > 0) {
+            if (cards.isEmpty()) return true;
+            zone = Z_CARDS;
+        } else {
+            int selected = browseKindIndex(), next = Math.max(0, Math.min(2, selected + dx));
+            if (next == selected) return true;
+            setBrowseKind(next == 0 ? null : next == 1 ? "movie" : "tv");
+            click.move();
+            return true;
+        }
+        retarget(false);
+        click.move();
+        return true;
+    }
+
+    /** Changing the filter reloads what is open (each genre and kind is remembered for a while) and is itself remembered. */
+    private void setBrowseKind(String kind) {
+        browseKind = kind;
+        ui.edit().putString("browseKind", kind == null ? "" : kind).apply();
+        if (browseGenre >= 0) {
+            recs.loadGenre(browseGenre, browseKind);
+            cardIndex = 0;
+            browseScroll.snap(0);
+            cards = new ArrayList<>();
+            updateCards();
+            snapBrowse();
+        }
+        heroDirty = true;
+        browseDirty = true;
+        wake();
+    }
+
     private int browseCols() {
         return browseGenre < 0 ? 4 : 7;
     }
@@ -3320,9 +3415,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
 
     private boolean moveBrowseCards(int dx, int dy) {
         int n = cards.size();
-        if (dy < 0 && (n == 0 || cardIndex < bCols)) {     // up from the first row: the tabs
-            zone = Z_TOP;
-            topIndex = tab;
+        if (dy < 0 && (n == 0 || cardIndex < bCols)) {     // up from the first row: the All / Movies / Shows filter
+            zone = Z_FILTER;
             retarget(false);
             click.move();
             return true;
@@ -3404,12 +3498,13 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             c.drawRoundRect(cell, r, r, fill);
             fill.setShader(null);
             c.drawText(fit(p.title, gLabel, cell.width() - 40 * k, 2), cell.left + 22 * k, cell.bottom - 24 * k, gLabel);
-        } else if ("plex".equals(p.app)) {
-            float cw = dChip.measureText("Plex") + 22 * k, ch = 34 * k;
-            tmp.set(cell.left + 10 * k, cell.top + 10 * k, cell.left + 10 * k + cw, cell.top + 10 * k + ch);
-            fill.setColor(0xCC000000);
-            c.drawRoundRect(tmp, ch / 2, ch / 2, fill);
-            c.drawText("Plex", tmp.left + 11 * k, tmp.centerY() + Ui.halfCap(dChip), dChip);
+        } else {
+            String service = Recs.serviceName(p);       // where to watch it: Netflix, Prime Video, Plex...
+            if (!service.isEmpty()) chip(c, service, cell.left + 10 * k, cell.top + 10 * k);
+            if (p.rating > 0) {                         // the grid is ordered by it
+                if (p.ratingLabel == null) p.ratingLabel = String.format(java.util.Locale.ROOT, "★ %.1f", p.rating);
+                chip(c, p.ratingLabel, cell.left + 10 * k, cell.bottom - 10 * k - 34 * k);
+            }
         }
         if (f > 0.02f) {
             if (lightSheen == null) {
@@ -3487,6 +3582,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
 
     private boolean moveLight(int dx, int dy) {
         if (tab == TAB_BROWSE && picksOn() && zone == Z_CARDS) return moveBrowseCards(dx, dy);
+        if (tab == TAB_BROWSE && picksOn() && zone == Z_FILTER) return moveFilter(dx, dy);
         switch (zone) {
             case Z_SHELF:
                 // Up from an empty shelf too: move()'s older zones (the hero, the corner capsule) aren't drawn any more.

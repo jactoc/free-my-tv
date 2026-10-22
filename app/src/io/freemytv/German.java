@@ -20,6 +20,7 @@ final class German {
             case "Sunset ": return "Sonnenuntergang ";
             case "Crypto": return "Krypto";
             case "24h change": return "Änderung in 24 h";
+            case "All": return "Alle";
             case "Good morning": return "Guten Morgen";
             case "Good afternoon": return "Guten Tag";
             case "Good evening": return "Guten Abend";

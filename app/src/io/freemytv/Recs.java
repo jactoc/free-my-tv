@@ -59,6 +59,7 @@ final class Recs {
         volatile int watchlisted = -1;      // -1 not known yet, 0 no, 1 yes
         volatile boolean lookedUp, lookingUp;
         volatile boolean detailing;     // its details are being fetched (Browse lists load them as you scroll)
+        String ratingLabel;             // "★ 8.4", made once by the home screen
     }
 
     interface Listener { void onRecs(); }
@@ -518,50 +519,64 @@ final class Recs {
         return null;
     }
 
-    /** The titles of a genre as the carousel shows them (those not on any of your apps drop out once their details are in). */
-    List<Pick> genreList(int genre) {
+    /** A genre's list is kept per kind: all (null), "movie" or "tv". */
+    private static int gkey(int genre, String kind) {
+        return genre * 3 + (kind == null ? 0 : kind.equals("movie") ? 1 : 2);
+    }
+
+    /** The titles of a genre as the Browse grid shows them (those not on any of your apps drop out once their details are in). */
+    List<Pick> genreList(int genre, String kind) {
         List<Pick> out = new ArrayList<>();
         synchronized (genreLists) {
-            List<Pick> list = genreLists.get(genre);
+            List<Pick> list = genreLists.get(gkey(genre, kind));
             if (list != null) for (Pick p : list) if (!p.detailed || p.pkg != null) out.add(p);
         }
         return out;
     }
 
-    boolean genreLoading(int genre) {
-        synchronized (genreLists) { return genreListsLoading.contains(genre) || !genreLists.containsKey(genre); }
+    boolean genreLoading(int genre, String kind) {
+        int key = gkey(genre, kind);
+        synchronized (genreLists) { return genreListsLoading.contains(key) || !genreLists.containsKey(key); }
     }
 
-    /** Fetches a genre's titles: popular ones on your apps, mixed one for one with your unwatched Plex titles of that genre. */
-    void loadGenre(int genre) {
+    /**
+     * Fetches a genre's titles (all, only movies or only shows): popular ones on your apps together with your unwatched
+     * Plex titles of that genre, best rated first whatever they are on.
+     */
+    void loadGenre(int genre, String kind) {
+        final int key = gkey(genre, kind);
         synchronized (genreLists) {
-            Long at = genreListsAt.get(genre);
-            if (genreListsLoading.contains(genre) || (at != null && System.currentTimeMillis() - at < BROWSE_LISTS_FOR)) return;
-            genreListsLoading.add(genre);
+            Long at = genreListsAt.get(key);
+            if (genreListsLoading.contains(key) || (at != null && System.currentTimeMillis() - at < BROWSE_LISTS_FOR)) return;
+            genreListsLoading.add(key);
         }
         detailIo.execute(() -> {
             List<Pick> mixed = new ArrayList<>();
             try {
                 String ids = providerFilter();
-                List<Pick> movies = discoverGenre("movie", GENRE_MOVIE[genre], ids);
-                List<Pick> shows = GENRE_TV[genre] > 0 ? discoverGenre("tv", GENRE_TV[genre], ids) : new ArrayList<>();
+                boolean wantMovies = kind == null || kind.equals("movie"), wantShows = kind == null || kind.equals("tv");
+                List<Pick> movies = wantMovies ? discoverGenre("movie", GENRE_MOVIE[genre], ids) : new ArrayList<>();
+                List<Pick> shows = wantShows && GENRE_TV[genre] > 0 ? discoverGenre("tv", GENRE_TV[genre], ids) : new ArrayList<>();
                 List<Pick> tmdb = new ArrayList<>();
                 alternate(tmdb, new HashSet<>(), movies, shows, 40);
                 List<Pick> plex = new ArrayList<>();
                 if (plexOn() && installed(PLEX_PKG)) {
                     try {
-                        plex = plexGenre(genre);
+                        plex = plexGenre(genre, kind);
                     } catch (Exception e) {
                         AppLog.w("plex genre: " + (e.getMessage() == null ? e.toString() : e.getMessage()));
                     }
                 }
-                for (int i = 0; i < Math.max(tmdb.size(), plex.size()); i++) {
-                    if (i < plex.size()) mixed.add(plex.get(i));
-                    if (i < tmdb.size()) mixed.add(tmdb.get(i));
-                }
+                rateByTmdb(plex);
+                // A title you have on Plex and that is also on a streaming app shows once, as the Plex one (it is yours).
+                Set<String> onPlex = new HashSet<>();
+                for (Pick p : plex) if (p.tmdb > 0) onPlex.add(p.kind + ":" + p.tmdb);
+                mixed.addAll(plex);
+                for (Pick p : tmdb) if (!onPlex.contains(p.kind + ":" + p.id)) mixed.add(p);
+                mixed.sort((a, b) -> Float.compare(b.rating, a.rating));     // best rated first, whatever it is on
                 synchronized (genreLists) {
-                    genreLists.put(genre, mixed);
-                    genreListsAt.put(genre, System.currentTimeMillis());
+                    genreLists.put(key, mixed);
+                    genreListsAt.put(key, System.currentTimeMillis());
                 }
                 notifyListeners();
                 // The first ones get their details now (which app they are on, the description...); the rest as you scroll.
@@ -577,12 +592,49 @@ final class Recs {
                 }
             } catch (Exception e) {
                 AppLog.w("genre: " + (e.getMessage() == null ? e.toString() : e.getMessage()));
-                synchronized (genreLists) { genreLists.put(genre, mixed); }
+                synchronized (genreLists) { genreLists.put(key, mixed); }
             } finally {
-                synchronized (genreLists) { genreListsLoading.remove(genre); }
+                synchronized (genreLists) { genreListsLoading.remove(key); }
                 notifyListeners();
             }
         });
+    }
+
+    private final Map<String, Float> tmdbRatings = new HashMap<>();     // "movie:123" -> TMDB's score, for the session
+
+    /**
+     * Plex's own ratings come from different places (Rotten Tomatoes' audience for movies, TMDB for shows) and run
+     * higher than TMDB's, which rates the streaming titles. Browse orders everything by one scale: TMDB's.
+     */
+    private void rateByTmdb(List<Pick> picks) {
+        List<java.util.concurrent.Future<?>> jobs = new ArrayList<>();
+        for (Pick p : picks) {
+            if (p.tmdb <= 0) continue;
+            jobs.add(tileIo.submit(() -> {
+                try {
+                    float r = tmdbRating(p.kind, p.tmdb);
+                    if (r > 0) p.rating = r;
+                } catch (Exception ignored) {
+                }
+            }));
+        }
+        for (java.util.concurrent.Future<?> job : jobs) {
+            try {
+                job.get(12, java.util.concurrent.TimeUnit.SECONDS);
+            } catch (Exception ignored) {
+            }
+        }
+    }
+
+    private float tmdbRating(String kind, int id) throws Exception {
+        String key = kind + ":" + id;
+        synchronized (tmdbRatings) {
+            Float known = tmdbRatings.get(key);
+            if (known != null) return known;
+        }
+        float score = (float) get("/" + kind + "/" + id + "?language=" + lang()).optDouble("vote_average", 0);
+        synchronized (tmdbRatings) { tmdbRatings.put(key, score); }
+        return score;
     }
 
     private List<Pick> discoverGenre(String kind, int genre, String ids) throws Exception {
@@ -593,7 +645,7 @@ final class Recs {
     }
 
     /** Your unwatched Plex titles of a genre (newest first), under whatever names the libraries give it. */
-    private List<Pick> plexGenre(int genre) throws Exception {
+    private List<Pick> plexGenre(int genre, String kind) throws Exception {
         String machine = plexGet("/identity").getString("machineIdentifier");
         List<Pick> movies = new ArrayList<>(), shows = new ArrayList<>();
         JSONArray sections = plexGet("/library/sections").optJSONArray("Directory");
@@ -602,6 +654,7 @@ final class Recs {
             String type = section.optString("type");
             if (!type.equals("movie") && !type.equals("show")) continue;
             boolean movie = type.equals("movie");
+            if (kind != null && !kind.equals(movie ? "movie" : "tv")) continue;
             JSONArray tags = plexGet("/library/sections/" + section.getString("key") + "/genre").optJSONArray("Directory");
             StringBuilder keys = new StringBuilder();
             for (int t = 0; tags != null && t < tags.length(); t++) {
@@ -1056,6 +1109,7 @@ final class Recs {
         p.backdrop = backdrop;
         String poster = o.optString("poster_path", "");
         if (!poster.isEmpty() && !"null".equals(poster)) p.poster = POSTERS + poster;
+        p.rating = (float) o.optDouble("vote_average", 0);
         list.add(p);
     }
 
