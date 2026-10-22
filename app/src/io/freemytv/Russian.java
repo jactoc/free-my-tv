@@ -18,6 +18,13 @@ final class Russian {
             case "Settings": return "Настройки";
             case "Launcher Settings": return "Настройки лаунчера";
             // Updates over the home network (Updates, Launcher Settings → Update)
+            case "Checking for updates…": return "Поиск обновлений…";
+            case "New version ready": return "Новая версия готова";
+            case "Couldn't check for updates": return "Не удалось проверить обновления";
+            case "Version ": return "Версия ";
+            case "titles": return "названий";
+            case "Plex connected": return "Plex подключён";
+            case "Plex unreachable": return "Plex недоступен";
             case "Update": return "Обновление";
             case "Checking…": return "Проверка…";
             case "Up to date": return "Актуальная версия";

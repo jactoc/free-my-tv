@@ -750,9 +750,11 @@ final class Recs {
                     continuePicks.addAll(merged);
                 }
                 continueAt = System.currentTimeMillis();
+                plexState = 1;
                 if (changed) notifyListeners();
             } catch (Exception e) {
                 continueAt = System.currentTimeMillis();
+                plexState = -1;
                 AppLog.w("continue: " + (e.getMessage() == null ? e.toString() : e.getMessage()));
             } finally {
                 continueLoading = false;
@@ -1113,7 +1115,9 @@ final class Recs {
                     if (i < plex.size()) mixed.add(plex.get(i));
                 }
                 list = mixed;
+                plexState = 1;
             } catch (Exception e) {
+                plexState = -1;
                 AppLog.w("plex: " + (e.getMessage() == null ? e.toString() : e.getMessage()));
             }
         }
@@ -1124,6 +1128,11 @@ final class Recs {
     }
 
     // MARK: - Plex (your own server: its newest unwatched movies and shows; the token only travels as a header)
+
+    private volatile int plexState;      // the last answer from the server: 1 it answered, -1 it didn't, 0 not asked yet
+
+    /** For the settings: whether the Plex server answered the last time it was asked (1), didn't (-1), or unknown (0). */
+    int plexState() { return plexState; }
 
     static boolean plexOn() {
         return !Config.PLEX_URL.trim().isEmpty() && !Config.PLEX_TOKEN.trim().isEmpty();

@@ -160,6 +160,9 @@ final class HomeMode {
     /** After the TV boots (and after a TV update): wait for the system to settle and check Home TV mode. */
     static void bootCheck(Context c) {
         ensureRemoteService(c, 30_000);
+        // The full check needs the TV's own ADB, often off: only after a TV update, or when something looks missing.
+        String fingerprint = state(c).optString("fingerprint", "");
+        if (fingerprint.equals(Build.FINGERPRINT) && looksIntact(c)) return;
         ModeJob.schedule(c, ModeJob.VERIFY, null, 45_000);
     }
 
@@ -170,8 +173,8 @@ final class HomeMode {
 
     /**
      * Without ADB: Home TV mode looks whole (our home screen is the default, our screensaver is set, the apps we turned
-     * off are still off). An update of this app changes none of that, and the full check needs the TV's own ADB, often
-     * off, which would leave a "couldn't check" notice after every update. Unsure (a setting we can't read) counts as
+     * off are still off). An update of this app or a boot without a TV update changes none of that, and the full check
+     * needs the TV's own ADB, often off, which would leave a "couldn't check" notice after every one of them. Unsure (a setting we can't read) counts as
      * not whole: then the full check runs.
      */
     static boolean looksIntact(Context c) {

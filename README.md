@@ -46,6 +46,7 @@ This is a personal fork of [simbasjungles/free-my-tv](https://github.com/simbasj
 - **Called Home TV.** On Google TV the app, its settings and its screensaver are named *Home TV* (the package is still `io.freemytv`, so a new build updates the installed app in place). The LG and Samsung builds keep the original name for now.
 - **Updates over your home network.** `./build.sh --publish` puts a new build in a folder on your network, and the TVs install it by themselves (Android asks to confirm): no adb after the first install. See [Updates over your home network](#updates-over-your-home-network-optional).
 - **A 24-hour clock**, in English too (the original shows 9:47 in English).
+- **A simpler settings page.** Plain black, one list (Home Screen, Screensaver, Shelf, then the preferences and Update) instead of a page inside a page, without the rows that do nothing on the TV (Remote Buttons where its remote has no app keys; the crypto rows when prices are off; TV Settings, which the home screen already has). The left side shows the update state and this build's date, the picks and whether Plex answers; only the newest notice, from the last three days, is shown.
 - **The top-right Settings button opens the TV's settings.** The launcher's own settings are *Launcher Settings* (formerly *Home Settings*) in the shortcuts drawer.
 
 ## Install
@@ -123,7 +124,7 @@ This build takes your city from the TV's time zone. For your exact city and the 
 
 ## Settings
 
-The first values come from `config.properties`, created by the first build (Google TV, LG and Samsung use the same file). Most of them can also be changed on the TV, in *Home TV* → *Launcher Settings*, and the TV's choice wins:
+The first values come from `config.properties`, created by the first build (Google TV, LG and Samsung use the same file). Most of them can also be changed on the TV, in Home TV's settings (its icon, or *Launcher Settings* on the home screen), and the TV's choice wins:
 
 | Key | What it does | Default |
 |---|---|---|

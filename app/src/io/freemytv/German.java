@@ -11,6 +11,13 @@ final class German {
             case "Settings": return "Einstellungen";
             case "Launcher Settings": return "Launcher-Einstellungen";
             // Updates over the home network (Updates, Launcher Settings → Update)
+            case "Checking for updates…": return "Suche nach Updates…";
+            case "New version ready": return "Neue Version bereit";
+            case "Couldn't check for updates": return "Update-Suche fehlgeschlagen";
+            case "Version ": return "Version ";
+            case "titles": return "Titel";
+            case "Plex connected": return "Plex verbunden";
+            case "Plex unreachable": return "Plex nicht erreichbar";
             case "Update": return "Update";
             case "Checking…": return "Wird geprüft…";
             case "Up to date": return "Aktuell";
