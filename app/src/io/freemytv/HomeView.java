@@ -151,7 +151,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     // (column and row) and the vertical scroll in rows.
     private final Spring selCol = new Spring(0.3f, 0.86f, 0), selRow = new Spring(0.3f, 0.86f, 0), browseScroll = new Spring(0.4f, 0.9f, 0);
     private boolean browseDirty;
-    private float bLeft, bTop, bTileW, bTileH, bGap, bClipTop, bClipBottom;
+    private float bLeft, bTop, bTileW, bTileH, bGap, bGapX, bClipTop, bClipBottom;
     private int bCols = 4, bVisRows = 4;
     private LinearGradient genreScrim;
     private int widgetIndex;    // with TalkBack on, the drawer's weather (0) or quotes (1) card can take the focus
@@ -3297,31 +3297,40 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         return browseKind == null ? 0 : browseKind.equals("movie") ? 1 : 2;
     }
 
-    /** All / Movies / Shows on the heading row, left of the round buttons; the focused one is the white pill, like the tabs. */
+    /**
+     * All / Movies / Shows, a segmented control under the tabs: a faint capsule with the chosen segment as a white pill
+     * (it grows and lifts when the focus is on it). It is not drawn like the tabs, so it can't be taken for more of them.
+     */
     private void drawFilter(Canvas c) {
         String[] labels = {Ui.tr("Tudo", "All", "Todo"), tabs()[1], tabs()[2]};
-        float pad = 26 * k, height = 58 * k, cy = L_BUTTON_CY * k, gap = 4 * k, total = gap * 2;
-        for (String label : labels) total += Math.max(lTabOn.measureText(label), lTab.measureText(label)) + 2 * pad;
-        float x = topRects[TABS_N].left - 44 * k - total, focus = Ui.clamp(filterFocus.value);
+        float pad = 28 * k, inset = 5 * k, height = 56 * k, cy = 268 * k, total = 2 * inset;
+        for (String label : labels) total += lTab.measureText(label) + 2 * pad;
+        float left = MARGIN * k - 26 * k, focus = Ui.clamp(filterFocus.value);
+        tmp.set(left, cy - height / 2, left + total, cy + height / 2);
+        fill.setShader(null);
+        fill.setColor(tone(0x14000000, 0x26FFFFFF));
+        c.drawRoundRect(tmp, height / 2, height / 2, fill);
+        float x = left + inset;
         int selected = browseKindIndex();
         for (int i = 0; i < 3; i++) {
-            float width = Math.max(lTabOn.measureText(labels[i]), lTab.measureText(labels[i])) + 2 * pad;
-            filterRects[i].set(x, cy - height / 2, x + width, cy + height / 2);
-            if (i == selected && focus > 0.01f) {
-                float scale = 1 + 0.05f * focus;
-                cell.set(filterRects[i].centerX() - width * scale / 2, cy - height * scale / 2, filterRects[i].centerX() + width * scale / 2, cy + height * scale / 2);
-                tmp.set(cell);
-                tmp.offset(0, 8 * k * focus);
-                shadow.setColor(Ui.alpha(0xFF000000, tone(0.22f, 0.4f) * focus));
-                shadows.draw(c, tmp, cell.height() / 2, SHADOW_BLUR * k, shadow);
-                fill.setShader(null);
-                fill.setColor(Ui.alpha(0xFFFFFFFF, focus));
+            float width = lTab.measureText(labels[i]) + 2 * pad, segment = height - 2 * inset;
+            filterRects[i].set(x, cy - segment / 2, x + width, cy + segment / 2);
+            if (i == selected) {
+                float scale = 1 + 0.06f * focus;
+                cell.set(filterRects[i].centerX() - width * scale / 2, cy - segment * scale / 2, filterRects[i].centerX() + width * scale / 2, cy + segment * scale / 2);
+                if (focus > 0.01f) {
+                    tmp.set(cell);
+                    tmp.offset(0, 7 * k * focus);
+                    shadow.setColor(Ui.alpha(0xFF000000, tone(0.2f, 0.4f) * focus));
+                    shadows.draw(c, tmp, cell.height() / 2, SHADOW_BLUR * k, shadow);
+                }
+                fill.setColor(blend(tone(0xFFFFFFFF, 0x40FFFFFF), 0xFFFFFFFF, focus));
                 c.drawRoundRect(cell, cell.height() / 2, cell.height() / 2, fill);
             }
             Paint paint = i == selected ? lTabOn : lTab;
             if (i == selected) lTabOn.setColor(blend(tone(L_INK, WHITE), L_INK, focus));
             c.drawText(labels[i], filterRects[i].centerX() - paint.measureText(labels[i]) / 2, cy + Ui.halfCap(paint), paint);
-            x += width + gap;
+            x += width;
         }
     }
 
@@ -3370,18 +3379,19 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         bGap = 24 * k;
         bLeft = MARGIN * k;
         float width = CONTENT_R * k - bLeft;
-        bTileW = (width - (bCols - 1) * bGap) / bCols;
+        bTop = 312 * k;                     // below the tabs and the All / Movies / Shows control
+        bClipTop = 296 * k;
         if (browseGenre < 0) {              // the genres: 4 x 4, all in view
-            bTop = 262 * k;
+            bTileW = (width - (bCols - 1) * bGap) / bCols;
             bTileH = (1030 * k - bTop - 3 * bGap) / 4;
+            bGapX = bGap;
             bVisRows = 4;
-            bClipTop = 240 * k;
             bClipBottom = h;
-        } else {                            // a genre's titles: posters, scrolling by rows; the caption sits below
-            bTop = 256 * k;
-            bTileH = bTileW * 1.5f;
-            bVisRows = Math.max(1, (int) ((976 * k - bTop + bGap) / (bTileH + bGap)));
-            bClipTop = 240 * k;
+        } else {                            // a genre's titles: two rows of posters in view, scrolling by rows; the caption sits below
+            bVisRows = 2;
+            bTileH = (984 * k - bTop - bGap) / 2;
+            bTileW = bTileH / 1.5f;
+            bGapX = (width - bCols * bTileW) / (bCols - 1);
             bClipBottom = 984 * k;
         }
     }
@@ -3468,7 +3478,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         Recs.Pick p = cards.get(i);
         boolean genre = "genre".equals(p.kind);
         int col = i % bCols, row = i / bCols;
-        float x = bLeft + col * (bTileW + bGap);
+        float x = bLeft + col * (bTileW + bGapX);
         float f = Ui.clamp(hat(col - selCol.value) * hat(row - selRow.value) * cardActive.value);
         float s = 1 + 0.07f * f, tw = bTileW * s, th = bTileH * s, lift = 6 * k * f;
         float r = (genre ? 20 : 14) * k * s;
