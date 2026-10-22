@@ -42,7 +42,18 @@ ASSIST=false; [ "$(prop disable_assistant false)" = "true" ] && ASSIST=true
 CRYPTO=false; [ "$(prop show_crypto true)" = "true" ] && CRYPTO=true
 ANIMATION=false; [ "$(prop hide_animation false)" = "true" ] && ANIMATION=true
 
-rm -rf out && mkdir -p out/gen/io/freemytv out/classes
+rm -rf out && mkdir -p out/gen/io/freemytv out/classes out/genres/xml
+
+# Plain http is refused everywhere except your Plex server, whose address (plex_url) is the only one allowed.
+# Written here, not committed, so no address of yours ends up in the repository.
+PLEX_HOST="$(prop plex_url '' | sed -e 's#^[a-zA-Z]*://##' -e 's#[:/].*$##')"
+[[ -z "$PLEX_HOST" || "$PLEX_HOST" =~ ^[A-Za-z0-9.-]+$ ]] || { echo "config.properties: plex_url must look like http://192.168.1.10:32400" >&2; exit 1; }
+{
+  echo '<?xml version="1.0" encoding="utf-8"?>'
+  echo '<network-security-config>'
+  [ -n "$PLEX_HOST" ] && echo "    <domain-config cleartextTrafficPermitted=\"true\"><domain includeSubdomains=\"false\">$PLEX_HOST</domain></domain-config>"
+  echo '</network-security-config>'
+} > out/genres/xml/network_security_config.xml
 cat > out/gen/io/freemytv/Config.java <<EOF
 package io.freemytv;
 
@@ -70,8 +81,9 @@ EOF
 
 # --- Build
 "$BT/aapt2" compile --dir app/res -o out/res.zip
+"$BT/aapt2" compile --dir out/genres -o out/res-gen.zip
 # Fonts uncompressed: Android reads them straight from the APK.
-"$BT/aapt2" link -o out/base.apk -I "$AJ" --manifest app/AndroidManifest.xml --java out/gen out/res.zip \
+"$BT/aapt2" link -o out/base.apk -I "$AJ" --manifest app/AndroidManifest.xml --java out/gen out/res.zip out/res-gen.zip \
   --min-sdk-version 28 --target-sdk-version 33 -A app/assets -0 ttf
 # Windows aapt2 packs assets with backslash separators ("assets/symbols\x.png") and Android
 # cannot find them: the home screen loses its icons and fonts. Rename the zip entries to "/".

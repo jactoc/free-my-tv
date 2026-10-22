@@ -19,13 +19,27 @@ Open source. Built with Claude Code. One button to undo.
 
 - **No ads.** No sponsored rows, banners or autoplaying promos. Not one.
 - **Your apps, front and center.** The streaming apps you actually use, on a glass shelf. Pick them and their order right on the TV.
-- **Trending, not sponsored.** Three fresh picks every hour from what's trending this week and the latest releases, only from apps you already have. Movies and Shows get their own tabs.
-- **Weather and markets, one press away.** The hour-by-hour forecast, sunrise and sunset, and live crypto prices.
+- **Trending, not sponsored.** What's trending this week and the latest releases, only from apps you already have, in a scrolling carousel. Movies and Shows get their own tabs. In this fork, [your Plex library](#this-fork) too.
+- **Weather and markets, one press away.** The hour-by-hour forecast, sunrise and sunset, and live crypto prices (the weather is off by default in this fork).
 - **Light by day, dark by night.** It follows your city's real sunset, the way your phone does.
 - **A screensaver to match.** Full-screen photos of the picks with a big glass clock.
-- **Fast.** 60 fps, every frame in 16.6 ms, on the TV's own chip. The home screen uses 96 MB of memory instead of 242 MB (−60%).<br><sub>Measured on a 98″ TCL Google TV running Android 14.</sub>
+- **Fast.** Drawn by hand on one canvas, with no libraries. The original's figures (60 fps, 96 MB instead of 242 MB, measured on a 98″ TCL Google TV running Android 14) are for its three-card layout; the carousel in this fork scrolls smoothly on a Chromecast with Google TV, whose GPU is the limit.
 - **Set up on the TV.** Language, your city, temperature, theme, the weather and prices cards, which coins, and the apps on the shelf, in Free My TV's own settings.
 - **Safe.** No root. Nothing is uninstalled. One button brings back the factory home screen.
+
+## This fork
+
+This is a personal fork of [simbasjungles/free-my-tv](https://github.com/simbasjungles/free-my-tv) (MIT), built on Google TV (a Chromecast with Google TV). What it changes, on top of the original:
+
+- **A carousel, not three cards.** Every tab scrolls through up to 40 titles. The focused card is wide and the others tall; moving focus slides the row and trades the widths. The background follows the focused card once you stop on it.
+- **A detail screen.** OK on a card opens the poster, title, year, genre, length, rating, description and cast, with three buttons: **Watch on …** (opens the app), **Trailer** and **Watchlist**.
+- **Your Plex library in the picks.** The newest *unwatched* movies and shows on your Plex server are mixed in, one for each TMDB pick, with a "Plex" badge, Plex's own artwork and a button that opens the Plex app. Set `plex_url` and `plex_token` in `config.properties` (see [Settings](#settings)). The Plex app is opened with a `plex://` link: it opens the app and, where the Plex app accepts the link, the title.
+- **Trailers inside the app.** The trailer plays in YouTube's embedded player in a screen of its own (OK pauses, ◀ ▶ skip 10 s, **Back returns to the title's page**). The YouTube app keeps its own history and sends Back to its home, so it isn't used, except for the few trailers a studio has blocked from embedding: OK then opens them in YouTube. The trailer comes from TMDB.
+- **Plex watchlist.** The **Watchlist** button adds the title to (or removes it from) your Plex watchlist, the one on your plex.tv account. For titles that aren't on your server it looks them up in Plex's catalog by name, kind and year.
+- **A greeting instead of "For You":** "Good morning / afternoon / evening", with your name if you set `name=`.
+- **Weather off by default** (it can still be switched on in *Launcher Settings*; sunrise and sunset still drive the day and night look).
+- **The system's own UI sounds** for moving and opening, the same ones Settings uses, following the TV's *sound effects* setting.
+- **The top-right Settings button opens the TV's settings.** The launcher's own settings are *Launcher Settings* (formerly *Home Settings*) in the shortcuts drawer.
 
 ## Install
 
@@ -102,13 +116,15 @@ This build takes your city from the TV's time zone. For your exact city and the 
 
 ## Settings
 
-The first values come from `config.properties`, created by the first build (Google TV, LG and Samsung use the same file). Most of them can also be changed on the TV, in *Free My TV* → *Home Settings*, and the TV's choice wins:
+The first values come from `config.properties`, created by the first build (Google TV, LG and Samsung use the same file). Most of them can also be changed on the TV, in *Free My TV* → *Launcher Settings*, and the TV's choice wins:
 
 | Key | What it does | Default |
 |---|---|---|
 | `tmdb_key` | Your free TMDB key, for the picks | empty |
 | `tmdb_region` | Your country (two letters): which titles are on which app | `US` |
 | `watchmode_key` | Optional, free [Watchmode](https://api.watchmode.com/) key: a pick opens the title's page in its app | empty |
+| `plex_url`, `plex_token` | Optional, your Plex server (e.g. `http://192.168.1.10:32400`) and your [X-Plex-Token](#your-plex-server-optional): its unwatched titles join the picks, and the Watchlist button works | empty |
+| `name` | Your first name, for the greeting ("Good evening, Alex") | empty |
 | `latitude`, `longitude` | Your city, for the weather and the sunset | New York |
 | `city` | The name on the weather card | `Weather` |
 | `hide_animation` | Leave cartoons and anime out of the picks | `false` |
@@ -123,6 +139,12 @@ Changed something? Run `./build.sh` and install again. Keep `freemytv.keystore`:
 ### The TMDB key
 
 Free, and it takes two minutes: create an account at [themoviedb.org](https://www.themoviedb.org/signup), then open [Settings → API](https://www.themoviedb.org/settings/api) and request a developer key. Paste the *API Read Access Token* (or the *API Key*) after `tmdb_key=`. It's your key: `config.properties` stays out of git.
+
+### Your Plex server (optional)
+
+Set `plex_url` (your server's address, with the port) and `plex_token` in `config.properties`. To find the token, open any item in Plex on the web, then **⋯ → Get Info → View XML**, and copy `X-Plex-Token` from the address. It is the token of your plex.tv account, so it also lets the **Watchlist** button work. Treat it like a password: `config.properties` stays out of git, and the token is sent only to your server and to plex.tv, as a header.
+
+Your server speaks plain `http` on the local network, so the build allows plain `http` for the host of `plex_url` and for nothing else (it writes that rule at build time, so no address is stored in the repository). Everything else stays on `https`. The TV must be on the same network as the server.
 
 ### Opening a title, not just its app (optional)
 
@@ -204,11 +226,12 @@ The website ([freemytv.io](https://freemytv.io)) is in [`docs/`](docs): plain HT
 
 ## Privacy
 
-No accounts, no analytics, no tracking. The app talks to TMDB, Open-Meteo (with the coordinates you set, or your time zone's main city), and Binance only when `show_crypto=true`, and Watchmode only when you set a `watchmode_key`. Your settings stay on your computer and your TV.
+No accounts, no analytics, no tracking. The app talks to TMDB, Open-Meteo (with the coordinates you set, or your time zone's main city), and Binance only when `show_crypto=true`, and Watchmode only when you set a `watchmode_key`. With `plex_url` and `plex_token` set it also talks to your own Plex server, and to plex.tv for the watchlist and for finding titles in Plex's catalog. A trailer is played by YouTube's embedded player in a WebView that can load only YouTube (without your YouTube account, so it may show ads); the title's trailer is looked up on TMDB. Your settings stay on your computer and your TV.
 
 ## Credits
 
-- Built with [Claude Code](https://claude.com/claude-code).
+- Built with [Claude Code](https://claude.com/claude-code). This fork adds the carousel, the detail screen, Plex and trailers on top of [simbasjungles/free-my-tv](https://github.com/simbasjungles/free-my-tv) by Simba and its contributors.
+- Plex is a trademark of Plex, Inc.; YouTube is a trademark of Google. Not affiliated with either.
 - The LG version builds on what [@danielthejoker18](https://github.com/danielthejoker18) found in [FreeMyTvWebOS](https://github.com/danielthejoker18/FreeMyTvWebOS) (MIT): installing through Developer Mode and opening apps through the TV's service bus.
 - On Samsung TVs it installs with [TizenBrew Installer](https://github.com/reisxd/TizenBrewInstaller) by [@reisxd](https://github.com/reisxd).
 - This product uses the TMDB API but is not endorsed or certified by [TMDB](https://www.themoviedb.org/).

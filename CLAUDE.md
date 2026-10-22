@@ -121,6 +121,12 @@ with a Tizen certificate (`--sign`), which 2017-2022 TVs install as it is; on 20
 with the person's Samsung certificate. Sign every release with the same author certificate: older TVs refuse an
 update signed by another. `python3 webos/build.py --generic` makes the LG `.ipk` that goes along.
 
+## This fork's additions
+
+- `plex_url`, `plex_token` (`config.properties`) and `name`: the same rules as the TMDB key (theirs, secret, only in `config.properties`, never printed, never committed). `build.sh` writes a network security config from `plex_url`'s host, so plain http is allowed for that one host only; nothing about their network goes in the repository.
+- `Recs`: the Plex picks (`fetchPlex`, mixed 1:1 into the list), the carousel's lists (`all`, `wanted`), the detail screen's posters, trailers and watchlist (`poster`, `lookup`, `watchlist`, on their own thread, `detailIo`). `HomeView`: the carousel (`layoutCards`, `cardPos`) and the detail screen (`drawDetail`, three buttons). `TrailerActivity`: trailers in YouTube's embedded player, so Back returns to the title.
+- The carousel scrolls on a weak GPU: keep `drawLightCard` free of allocations, text measuring and live blurs (`Shadows.drawCached`), and keep the background change deferred while the focus moves (`focusCard`).
+
 ## Adapting it to another TV
 
 Read first, change after. Read-only commands that tell you what the TV has:
@@ -174,7 +180,7 @@ HDMI (Chromecast with Google TV, Google TV Streamer, onn 4K, NVIDIA Shield). Set
   come from those files too (patterns for the parts built at runtime). Add them all. Comments in English, short, only where the why
   isn't obvious.
 - Settings come from `config.properties` through the generated `out/gen/io/freemytv/Config.java` (never edit that).
-  What the person changes on the TV (`Prefs`: Home Settings, Shelf, Remote Buttons) wins over those first values.
+  What the person changes on the TV (`Prefs`: Launcher Settings, Shelf, Remote Buttons) wins over those first values.
 - The remote's app buttons (`RemoteKeys`, `RemoteKeyService`) use each brand's key codes: they run only on TCL,
   Vestel, KTC (NextStar) and Sony TVs and Formovie projectors, the service is on only in Free My TV mode, and *Original* takes it out of the enabled accessibility
   services. The system waits for the service on every key, so it lives alone in the `:keys` process: what it reads is
