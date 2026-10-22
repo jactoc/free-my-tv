@@ -18,6 +18,9 @@ MAP = {
     "check": ("check", 0), "play": ("play_arrow", 1), "tv_settings": ("display_settings", 1),
     "chevron_down": ("keyboard_arrow_down", 0), "sunrise": ("wb_twilight", 1), "sunset": ("wb_twilight", 1),
     "live_tv": ("live_tv", 1), "bitcoin": ("currency_bitcoin", 0),
+    "lightbulb": ("lightbulb", 1), "shades": ("roller_shades", 1), "shades_closed": ("roller_shades_closed", 1),
+    "movie": ("movie", 1), "thermostat": ("thermostat", 1), "humidity": ("humidity_percentage", 1),
+    "window": ("sensor_window", 1), "door": ("sensor_door", 1),
 }
 
 

@@ -51,17 +51,19 @@ ANIMATION=false; [ "$(prop hide_animation false)" = "true" ] && ANIMATION=true
 
 rm -rf out && mkdir -p out/gen/io/freemytv out/classes out/genres/xml
 
-# Plain http is refused everywhere except your Plex server and your update folder (plex_url, update_url), the only
+# Plain http is refused everywhere except your Plex server, your update folder and Home Assistant (plex_url, update_url, ha_url), the only
 # addresses allowed. Written here, not committed, so no address of yours ends up in the repository.
 host_of() { prop "$1" '' | sed -e 's#^[a-zA-Z]*://##' -e 's#[:/].*$##'; }
 PLEX_HOST="$(host_of plex_url)"
 UPDATE_HOST="$(host_of update_url)"
+HA_HOST="$(host_of ha_url)"
 [[ -z "$PLEX_HOST" || "$PLEX_HOST" =~ ^[A-Za-z0-9.-]+$ ]] || { echo "config.properties: plex_url must look like http://192.168.1.10:32400" >&2; exit 1; }
+[[ -z "$HA_HOST" || "$HA_HOST" =~ ^[A-Za-z0-9.-]+$ ]] || { echo "config.properties: ha_url must look like http://192.168.1.10:8123" >&2; exit 1; }
 [[ -z "$UPDATE_HOST" || "$UPDATE_HOST" =~ ^[A-Za-z0-9.-]+$ ]] || { echo "config.properties: update_url must look like http://192.168.1.10:8099/" >&2; exit 1; }
 {
   echo '<?xml version="1.0" encoding="utf-8"?>'
   echo '<network-security-config>'
-  for host in $(printf '%s\n' "$PLEX_HOST" "$UPDATE_HOST" | sort -u); do
+  for host in $(printf '%s\n' "$PLEX_HOST" "$UPDATE_HOST" "$HA_HOST" | grep . | sort -u); do
     echo "    <domain-config cleartextTrafficPermitted=\"true\"><domain includeSubdomains=\"false\">$host</domain></domain-config>"
   done
   echo '</network-security-config>'
@@ -81,6 +83,8 @@ final class Config {
     static final String PLEX_URL = "$(prop plex_url '')";
     static final String PLEX_TOKEN = "$(prop plex_token '')";
     static final String UPDATE_URL = "$(prop update_url '')";
+    static final String HA_URL = "$(prop ha_url '')";
+    static final String HA_TOKEN = "$(prop ha_token '')";
     static final String TMDB_REGION = "$(prop tmdb_region US)";
     static final String LATITUDE = "$LAT";
     static final String LONGITUDE = "$LON";

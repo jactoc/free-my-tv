@@ -62,7 +62,7 @@ import java.util.function.Consumer;
  * Measurements are in a 1920×1080 space (k = width / 1920). The screen is split into layers so the TV's weak GPU only
  * redraws what changed.
  */
-final class HomeView extends ViewGroup implements Choreographer.FrameCallback, HomeData.Listener, Recs.Listener {
+final class HomeView extends ViewGroup implements Choreographer.FrameCallback, HomeData.Listener, Recs.Listener, HomeAssistant.Listener {
     // tvOS grid (Human Interface Guidelines): content inside the safe area, 80 px from the sides and 60 from top and
     // bottom; 40 px between items; 7 columns of 217 px (the apps). The shelf glass extends 36 px past the tiles (the
     // same padding on all four sides) and the tile corners are concentric with it (glass radius = radius + padding).
@@ -90,7 +90,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private static final long TOAST_MS = 6000, FADE_MS = 800;
     /** Blur radii of the shadow and shadowDeep paints (Shadows needs them to draw the same blur on older TVs). */
     private static final float SHADOW_BLUR = 26, DEEP_BLUR = 30;
-    private static final int SKY = 0, HERO = 1, STATUS = 2, PLATTER = 3, TILES = 4, DRAWER = 5, SHEET = 6, TOAST = 7, DETAIL = 8, BROWSE = 9, CARDS = 11;
+    private static final int SKY = 0, HERO = 1, STATUS = 2, PLATTER = 3, TILES = 4, DRAWER = 5, SHEET = 6, TOAST = 7, DETAIL = 8, BROWSE = 9, CARDS = 11, SPACES = 12;
     private static final int Z_STATUS = 0, Z_HERO = 1, Z_SHELF = 2, Z_DRAWER = 3;
     private static final ExecutorService LOADER = Executors.newSingleThreadExecutor();
     // Light design (the L_ constants): title, tab bar, three recommendation cards and the shelf.
@@ -108,16 +108,16 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private static final float APPS_GRID_TOP = 240;     // the Apps tab's grid, under the tabs, level with the other tabs' content
     private static final float L_DATE_BASE = 330, L_CLOCK_BASE = 540, L_WEATHER_BASE = 626, L_QUOTES_BASE = 694;
     private static final int L_INK = 0xFF1D1D1F, L_DIM = 0xFF6E6E73, L_FAINT = 0xFF8E8E93;
-    private static final String[] TABS = {"Início", "Descobrir", "Categorias", "Apps"};
-    private static final String[] TABS_RU = {"Главная", "Обзор", "Категории", "Приложения"};
-    private static final String[] TABS_EN = {"Home", "Discover", "Browse", "Apps"};
-    private static final String[] TABS_ES = {"Inicio", "Descubrir", "Categorías", "Apps"};
-    private static final String[] TABS_DE = {"Start", "Entdecken", "Kategorien", "Apps"};
+    private static final String[] TABS = {"Início", "Descobrir", "Categorias", "Apps", "Ambientes"};
+    private static final String[] TABS_RU = {"Главная", "Обзор", "Категории", "Приложения", "Комнаты"};
+    private static final String[] TABS_EN = {"Home", "Discover", "Browse", "Apps", "Spaces"};
+    private static final String[] TABS_ES = {"Inicio", "Descubrir", "Categorías", "Apps", "Espacios"};
+    private static final String[] TABS_DE = {"Start", "Entdecken", "Kategorien", "Apps", "Räume"};
     /**
      * Tabs on the left (Continue, Explore, Browse, Apps); the round buttons on the right take the indices after them.
      * Apps is the shelf of apps with its shortcuts, the drawer pinned open; Down from the carousel jumps into it.
      */
-    private static final int TABS_N = 4, TAB_HOME = 0, TAB_DISCOVER = 1, TAB_BROWSE = 2, TAB_APPS = 3;
+    private static final int TABS_N = 5, TAB_HOME = 0, TAB_DISCOVER = 1, TAB_BROWSE = 2, TAB_APPS = 3, TAB_SPACES = 4;
     // Home: one row of landscape cards under the tabs, the shelf of apps below it.
     private static final float H_LABEL = 192, H_TOP = 232, H_W = 720, H_H = 405, H_GAP = 32;
     private static final int H_VISIBLE = 2;
@@ -127,6 +127,12 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private static final float D_PAGE = 760, D_LABEL2 = 252 + D_PAGE, D_TOP2 = 300 + D_PAGE, D_CLIP = 212;
     private static final int Z_TOP = 4, Z_CARDS = 5, Z_FILTER = 10;     // Z_FILTER: All / Movies / Shows in Browse
     private static final int Z_APPS = 12;       // the Apps tab's grid
+    // Spaces (Home Assistant): the room switcher under the tabs (Z_ROOMS), then the room's tiles in sections (Z_SPACES).
+    // Tiles as in Apple's Home app: 4 to a row; on, a bright tile with a colored symbol; off, a quiet dark one.
+    private static final int Z_ROOMS = 13, Z_SPACES = 14, MAX_SPACES = 48;
+    private static final float S_TOP = 240, S_TILE_W = 416, S_TILE_H = 136, S_GAP = 32, S_ROW_GAP = 28, S_COLS = 4;
+    private static final float S_HEAD = 52, S_SECTION_GAP = 44, S_RADIUS = 26;
+    private static final int[] BRIGHTNESS_STEPS = {0, 1, 5, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100};
 
     private final Activity activity;
     private final Scene scene = new Scene();
@@ -146,6 +152,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         @Override public boolean clickable(int id) { return (id - 1) / 1000 != WIDGETS; }
     });
     private final RectF a11yRect = new RectF();
+    private final Layer spacesLayer;
     private final Layer sky, browseLayer, cardsLayer, heroLayer, status, platter, tiles, drawerLayer, sheetLayer, detailLayer, toastLayer;
     /** The carousel first (the shelf lives in the Apps tab); without a TMDB key there is no carousel, and the shelf is the home. */
     private int zone = Config.TMDB_KEY.trim().isEmpty() ? Z_SHELF : Z_CARDS;
@@ -261,7 +268,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private Spring[] tileSlide = new Spring[0];
     private final Spring moveLift = new Spring(0.3f, 0.72f, 0);
     private List<HomeApps.Item> reorderOrigin;
-    private final Runnable holdStart = () -> { if (this.okDown && this.holdArmed) startReorder(); };
+    private final Runnable holdStart = () -> { if (this.okDown && this.holdArmed) holdOk(); };
 
     // Corner capsule
     private List<HomeApps.Item> statusItems = new ArrayList<>();
@@ -398,6 +405,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                 case SHEET: drawSheet(c); break;
                 case DETAIL: drawDetail(c); break;
                 case BROWSE: drawBrowse(c); break;
+                case SPACES: drawSpaces(c); break;
                 case CARDS: drawLightCards(c); break;
                 default: drawToast(c); break;
             }
@@ -406,6 +414,21 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     }
 
     private final Runnable reloadSoon = this::reload;
+
+    // Spaces
+    private final HomeAssistant ha = HomeAssistant.get();
+    private int roomIndex, spaceIndex;
+    private final Spring[] spaceFocus = new Spring[MAX_SPACES];
+    private final RectF[] spaceRects = new RectF[MAX_SPACES];
+    private final RectF[] roomRects = new RectF[16];
+    private final Spring roomFocus = new Spring(0.26f, 0.85f, 0), control = new Spring(0.3f, 0.86f, 0);
+    private final List<HomeAssistant.Thing> spaceItems = new ArrayList<>();
+    private final List<Object[]> spaceSections = new ArrayList<>();     // {heading, first index, count, heading baseline}
+    private HomeAssistant.Thing controlThing;       // the slider is open on it (hold OK on a dimmable light or a shutter)
+    private int controlValue;
+    private boolean spacesDirty, spacesLoading, controlPending;
+    private Paint sName, sState, sStatus, sControlTitle, sControlValue;
+    private final Runnable controlSend = () -> sendControl();
 
     private final TvInputManager.TvInputCallback inputCallback = new TvInputManager.TvInputCallback() {
         @Override public void onInputStateChanged(String inputId, int state) { reloadSoon(); }
@@ -457,14 +480,15 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         sheetLayer = new Layer(a, SHEET);
         detailLayer = new Layer(a, DETAIL);
         browseLayer = new Layer(a, BROWSE);
+        spacesLayer = new Layer(a, SPACES);
         cardsLayer = new Layer(a, CARDS);
         toastLayer = new Layer(a, TOAST);
         // Hardware layers on the GPU: only the one that changed is redrawn; moving, fading and scaling stay cheap.
         // Not on Android 9 to 11: on older GPUs (a Mi Box 3's Mali-450) redrawing and compositing a big layer on every
         // frame cost more than drawing straight to the screen (measured: focus on the picks 33 → 12 ms a frame, the
         // drawer 19 → 17 ms).
-        for (View v : new View[] {browseLayer, cardsLayer, heroLayer, status, platter, tiles, drawerLayer, sheetLayer, detailLayer}) v.setLayerType(Ui.LEGACY ? LAYER_TYPE_NONE : LAYER_TYPE_HARDWARE, null);
-        for (View v : new View[] {sky, browseLayer, cardsLayer, heroLayer, status, platter, tiles, drawerLayer, sheetLayer, detailLayer, toastLayer}) {
+        for (View v : new View[] {browseLayer, spacesLayer, cardsLayer, heroLayer, status, platter, tiles, drawerLayer, sheetLayer, detailLayer}) v.setLayerType(Ui.LEGACY ? LAYER_TYPE_NONE : LAYER_TYPE_HARDWARE, null);
+        for (View v : new View[] {sky, browseLayer, spacesLayer, cardsLayer, heroLayer, status, platter, tiles, drawerLayer, sheetLayer, detailLayer, toastLayer}) {
             v.setImportantForAccessibility(IMPORTANT_FOR_ACCESSIBILITY_NO);   // TalkBack reads the items (Spoken)
             addView(v);
         }
@@ -484,6 +508,12 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         sheetLayer.setVisibility(INVISIBLE);
         detailLayer.setVisibility(INVISIBLE);
         browseLayer.setVisibility(INVISIBLE);
+        spacesLayer.setVisibility(INVISIBLE);
+        for (int i = 0; i < MAX_SPACES; i++) {
+            spaceFocus[i] = new Spring(0.26f, 0.85f, 0);
+            spaceRects[i] = new RectF();
+        }
+        for (int i = 0; i < roomRects.length; i++) roomRects[i] = new RectF();
         scene.setMotion(0.6f, 0f);
         updatePalette();
         // First time: right away (a cold start opens with the apps already there); missing logos come from reload().
@@ -503,6 +533,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         lastStep = 0;
         data.addListener(this);
         recs.addListener(this);
+        ha.addListener(this);
+        ha.watch(tab == TAB_SPACES);
         data.refreshIfStale();
         recs.refreshIfStale();
         recs.refreshContinueNow();      // coming back from watching something: its progress has moved
@@ -535,6 +567,9 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         handler.removeCallbacks(reloadSoon);
         data.removeListener(this);
         recs.removeListener(this);
+        ha.removeListener(this);
+        ha.watch(false);
+        closeControl(true);
         if (tvInputs != null) tvInputs.unregisterCallback(inputCallback);
     }
 
@@ -625,6 +660,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         measure(sheetLayer, width, height);
         measure(detailLayer, width, height);
         measure(browseLayer, width, height);
+        measure(spacesLayer, width, height);
         measure(toastLayer, Math.round(1000 * kk), Math.round(220 * kk));
         setMeasuredDimension(width, height);
     }
@@ -647,6 +683,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         sheetLayer.setPivotX(width / 2f);
         sheetLayer.setPivotY(height / 2f);
         browseLayer.layout(0, 0, width, height);
+        spacesLayer.layout(0, 0, width, height);
         detailLayer.layout(0, 0, width, height);
         detailLayer.setPivotX(width / 2f);
         detailLayer.setPivotY(height / 2f);
@@ -699,6 +736,13 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         lCardTitle = Ui.tracked(Ui.text(Ui.semibold, 31 * k, L_INK), 31);
         lCardMeta = Ui.tracked(Ui.text(Ui.medium, 25 * k, L_DIM), 25);
         lSection = Ui.tracked(Ui.text(Ui.semibold, 31 * k, L_INK), 31);
+        sName = Ui.tracked(Ui.text(Ui.semibold, 29 * k, L_INK), 29);        // Spaces: Body, emphasized
+        sState = Ui.tracked(Ui.text(Ui.medium, 25 * k, L_DIM), 25);         // Caption 1
+        sStatus = Ui.tracked(Ui.text(Ui.medium, 29 * k, L_DIM), 29);
+        sControlTitle = Ui.tracked(Ui.text(Ui.semibold, 38 * k, WHITE), 38);    // Headline
+        sControlValue = Ui.tracked(Ui.text(Ui.displaySemibold, 57 * k, WHITE), 57);    // Title 2
+        sControlTitle.setTextAlign(Paint.Align.CENTER);
+        sControlValue.setTextAlign(Paint.Align.CENTER);
         spinPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
         spinPaint.setStyle(Paint.Style.STROKE);
         spinPaint.setStrokeCap(Paint.Cap.ROUND);
@@ -787,12 +831,13 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         boolean drawerMoving = drawer.step(dt);
         boolean sheetMoving = sheet.step(dt), detailMoving = detail.step(dt) | step(btnFocus, dt);
         boolean browseMoving = selCol.step(dt) | selRow.step(dt) | browseScroll.step(dt);
+        boolean controlMoving = control.step(dt), spacesMoving = step(spaceFocus, dt) | roomFocus.step(dt) | controlMoving;
         boolean toastFading = tickToast(up);
         boolean heroFading = tickHeroFade(up);
         boolean bgFading = tickBackgroundFade(up);
         boolean nightMoving = tickNight(up);
 
-        if (drawerMoving || sheetMoving || detailMoving || pageMoving || motionDirty) updateMotion();
+        if (drawerMoving || sheetMoving || detailMoving || pageMoving || controlMoving || motionDirty) updateMotion();
         // Opening and closing the drawer only moves the cached layers: redrawing the glass on every frame made the TV
         // drop frames (measured: ~50 ms of GPU per frame). The app tiles have no glass; the top buttons fade out as
         // they rise; the drawer is drawn resting in place; the glass shelf is redrawn once the drawer stops, so the
@@ -807,6 +852,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         if (gridMoving || gridDirty) sheetLayer.invalidate();
         if (detailOpen && (detailMoving || detailDirty)) detailLayer.invalidate();
         if (tab == TAB_BROWSE && (browseMoving || browseDirty || cardsMoving)) browseLayer.invalidate();
+        if (tab == TAB_SPACES && (spacesMoving || spacesDirty || spacesLoading)) spacesLayer.invalidate();
+        spacesDirty = false;
         browseDirty = false;
         detailDirty = false;
         if (drawerMoving || bgFading) sky.invalidate();
@@ -826,7 +873,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         // Busy: something is moving, or the sheet or the drawer is open.
         boolean busy = tilesMoving || statusMoving || heroMoving || drawerItemsMoving || gridMoving || drawerMoving
                 || sheetMoving || detailMoving || toastFading || heroFading || bgFading || nightMoving || sheetOpen || sheet.value > 0.001f
-                || detailOpen || detail.value > 0.001f || browseMoving
+                || detailOpen || detail.value > 0.001f || browseMoving || spacesMoving || spacesLoading || controlThing != null
                 || (drawerOpen && tab != TAB_APPS) || drawer.value > 0.001f || toast != null || !toasts.isEmpty() || loadingShown;
         if (loadingShown) cardsLayer.invalidate();
         idle = !busy;
@@ -857,8 +904,9 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         boolean cardsHome = picksOn();
         // With a carousel the heading and tabs never move: the carousel scrolls up and away while the apps, which peek
         // from the bottom edge, rise into their place under the tab bar (the Apps tab). Without one, the old drawer.
-        show(heroLayer, cardsHome ? home : top, cardsHome ? 0 : lift);
-        show(status, cardsHome ? home : top, cardsHome ? 0 : lift);
+        float veil = 1 - 0.62f * Ui.clamp(control.value);     // the Spaces slider dims the tabs with the rest
+        show(heroLayer, (cardsHome ? home : top) * veil, cardsHome ? 0 : lift);
+        show(status, (cardsHome ? home : top) * veil, cardsHome ? 0 : lift);
         float page = tab == TAB_DISCOVER ? discoverPage.value : 0, pageShift = -page * D_PAGE * k;
         show(cardsLayer, cardsHome ? home * (1 - smoothstep(0, 0.7f, dc)) : 0, -d * 380 * k + pageShift);
         cardsClip.set(0, page > 0.001f ? Math.round(D_CLIP * k - cardsLayer.getTop() - pageShift) : 0, cardsLayer.getWidth(), cardsLayer.getHeight());
@@ -881,6 +929,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         sheetLayer.setScaleY(scale);
         browseLayer.setVisibility(tab == TAB_BROWSE && home > 0.001f ? VISIBLE : INVISIBLE);
         browseLayer.setAlpha(home);
+        spacesLayer.setVisibility(tab == TAB_SPACES && home > 0.001f ? VISIBLE : INVISIBLE);
+        spacesLayer.setAlpha(home);
         detailLayer.setVisibility(dv > 0.001f || detailOpen ? VISIBLE : INVISIBLE);
         detailLayer.setAlpha(dv);
         float dscale = 1.04f - 0.04f * dv;
@@ -1918,6 +1968,12 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             pos.snap(cardIndex);
             discoverPage.snap(discoverPage.target);
         }
+        if (tab == TAB_SPACES) {
+            aim(spaceFocus, !sheetOpen && zone == Z_SPACES ? spaceIndex : -1, snap);
+            roomFocus.target = !sheetOpen && zone == Z_ROOMS ? 1 : 0;
+            if (snap) roomFocus.snap(roomFocus.target);
+            spacesDirty = true;
+        }
         heroChanged |= topChanged;
         statusChanged |= topChanged;
         tilesDirty |= snap || tilesChanged;
@@ -2531,10 +2587,10 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                         okDown = true;
                         okHeld = false;
                         handler.removeCallbacks(holdStart);
-                        holdArmed = canReorder();
+                        holdArmed = canReorder() || canControl();
                         if (holdArmed) handler.postDelayed(holdStart, HOLD_MS);
                     } else if (okDown && holdArmed && e.isLongPress()) {
-                        startReorder();
+                        holdOk();
                     }
                 } else {
                     holdArmed = false;
@@ -2557,8 +2613,21 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     }
 
     private void back() {
-        if (detailOpen) {
+        if (controlThing != null) {
+            closeControl(false);
+        } else if (detailOpen) {
             closeDetail();
+        } else if (tab == TAB_SPACES && zone == Z_SPACES) {
+            zone = Z_ROOMS;             // up from the tiles to the rooms
+            spacesDirty = true;
+            retarget(false);
+        } else if (tab == TAB_SPACES && zone == Z_ROOMS) {
+            zone = Z_TOP;
+            topIndex = tab;
+            spacesDirty = true;
+            retarget(false);
+        } else if (tab == TAB_SPACES && !sheetOpen && zone != Z_DRAWER && zone != WIDGETS) {
+            return;
         } else if (browseGenre >= 0) {
             leaveGenre();
         } else if (tab == TAB_DISCOVER && zone == Z_CARDS && discoverRow == 1) {
@@ -2749,6 +2818,10 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         }
         if (reordering) {   // TalkBack's click while moving an app: drop it
             dropReorder();
+            return;
+        }
+        if (tab == TAB_SPACES && (zone == Z_ROOMS || zone == Z_SPACES || controlThing != null)) {
+            activateSpaces();
             return;
         }
         HomeApps.Item it;
@@ -3241,6 +3314,10 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         float pad = 26 * k, tabTop = L_TABBAR_TOP * k, tabBottom = (L_TABBAR_TOP + L_TABBAR_H) * k;
         float x = MARGIN * k - pad;
         for (int i = 0; i < TABS_N; i++) {
+            if (i >= tabCount()) {                  // Spaces without Home Assistant: no tab
+                topRects[i].set(-1, -1, -1, -1);
+                continue;
+            }
             float tw = Math.max(lTopTabOn.measureText(tabs()[i]), lTopTab.measureText(tabs()[i]));
             topRects[i].set(x, tabTop, x + tw + 2 * pad, tabBottom);
             x = topRects[i].right + 16 * k;
@@ -3286,7 +3363,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     /** The three cards of the current tab (Explore, Movies, Shows) and the background taken from the first one. */
     private void updateCards() {
         if (tab == TAB_DISCOVER) updateDiscover();
-        List<Recs.Pick> list = tab == TAB_APPS ? new ArrayList<>()
+        List<Recs.Pick> list = tab == TAB_APPS || tab == TAB_SPACES ? new ArrayList<>()
                 : tab == TAB_HOME ? homeList()
                 : tab == TAB_DISCOVER ? (discoverRow == 0 ? discoverMain : discoverNew)
                 : browseGenre < 0 ? recs.genreCards() : recs.genreList(browseGenre, browseKind);
@@ -3310,8 +3387,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
      * shelf, the most expensive thing on screen) then waits for the focus to rest on a card for a moment.
      */
     private void focusCard(boolean settled) {
-        if (tab == TAB_APPS) {
-            showBackdrop(null);     // a calm background behind the apps
+        if (tab == TAB_APPS || tab == TAB_SPACES) {
+            showBackdrop(null);     // a calm background behind the apps and the rooms
             heroDirty = true;
             return;
         }
@@ -3387,6 +3464,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             gridDirty = true;
         }
         tab = index;
+        ha.watch(running && index == TAB_SPACES);
+        if (index == TAB_SPACES) openSpaces();
         browseGenre = -1;
         cardIndex = 0;
         cardPos.snap(0);
@@ -3472,7 +3551,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         // Text tabs (the selected one in bold, in the main text color); with focus on the tabs, the selected one gets
         // the white pill with a shadow and grows a little (the tvOS focus).
         float focus = Ui.clamp(topFocus[tab].value);
-        for (int i = 0; i < TABS_N; i++) {
+        for (int i = 0; i < tabCount(); i++) {
             RectF r = topRects[i];
             if (i == tab && focus < 0.99f) {
                 float rr = r.height() / 2;
@@ -3503,7 +3582,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         if (tab == TAB_BROWSE && browseGenre >= 0) {    // the genre that's open, right after the filter, on its row
             c.drawText(browseName, filterRects[2].right + 40 * k, L_FILTER_CY * k + Ui.halfCap(lTopTabOn), lTopTabOn);
         }
-        if (tab != TAB_BROWSE && tab != TAB_APPS && HomeData.coinCount() > 0) drawQuotes(c);
+        if (tab != TAB_BROWSE && tab != TAB_APPS && tab != TAB_SPACES && HomeData.coinCount() > 0) drawQuotes(c);
     }
 
 
@@ -4200,6 +4279,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     }
 
     private boolean moveLight(int dx, int dy) {
+        if (tab == TAB_SPACES && (zone == Z_ROOMS || zone == Z_SPACES || controlThing != null)) return moveSpaces(dx, dy);
         if (tab == TAB_BROWSE && picksOn() && zone == Z_CARDS) return moveBrowseCards(dx, dy);
         if (tab != TAB_HOME && picksOn() && zone == Z_FILTER) return moveFilter(dx, dy);
         switch (zone) {
@@ -4218,12 +4298,18 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                 return tab == TAB_HOME ? moveHome(dx, dy) : moveDiscover(dx, dy);
             case Z_TOP:
                 if (dx != 0) {
-                    int next = Math.max(picksOn() ? 0 : TABS_N, Math.min(TABS_N + 2, topIndex + dx));
+                    int next = topIndex + dx;
+                    if (next >= tabCount() && next < TABS_N) next = dx > 0 ? TABS_N : tabCount() - 1;    // past a hidden tab
+                    next = Math.max(picksOn() ? 0 : TABS_N, Math.min(TABS_N + 2, next));
                     if (next == topIndex) return true;
                     topIndex = next;
                     if (topIndex < TABS_N) selectTab(topIndex);   // like Apple TV tabs: focusing a tab selects it
                 } else if (dy > 0) {
-                    if (tab == TAB_APPS) {
+                    if (tab == TAB_SPACES) {
+                        if (ha.rooms().isEmpty()) return true;
+                        zone = Z_ROOMS;
+                        spacesDirty = true;
+                    } else if (tab == TAB_APPS) {
                         if (others.isEmpty()) return true;
                         zone = Z_APPS;
                         retargetGrid(false);
@@ -4256,6 +4342,460 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             }
         }
         return best;
+    }
+
+    // MARK: - Spaces: Home Assistant's rooms, with their lights, shutters and scenes
+
+    /** Spaces is a tab only with Home Assistant set up (ha_url, ha_token). */
+    private int tabCount() {
+        return HomeAssistant.on() ? TABS_N : TABS_N - 1;
+    }
+
+    @Override public void onHome() {
+        if (tab != TAB_SPACES) return;
+        clampSpaces();
+        spacesDirty = true;
+        wake();
+    }
+
+    /** The tab opens on the room picked last on this TV (the bedroom TV keeps the bedroom). */
+    private void openSpaces() {
+        String saved = ui.getString("spacesRoom", "");
+        List<HomeAssistant.Room> rooms = ha.rooms();
+        roomIndex = 0;
+        for (int i = 0; i < rooms.size(); i++) if (rooms.get(i).id.equals(saved)) roomIndex = i;
+        spaceIndex = 0;
+        controlThing = null;
+        control.snap(0);
+        spacesDirty = true;
+    }
+
+    private HomeAssistant.Room room() {
+        List<HomeAssistant.Room> rooms = ha.rooms();
+        return rooms.isEmpty() ? null : rooms.get(Math.min(roomIndex, rooms.size() - 1));
+    }
+
+    private void clampSpaces() {
+        String saved = ui.getString("spacesRoom", "");
+        List<HomeAssistant.Room> rooms = ha.rooms();
+        for (int i = 0; i < rooms.size(); i++) if (rooms.get(i).id.equals(saved)) roomIndex = i;    // the list arrived late
+        if (roomIndex >= rooms.size()) roomIndex = Math.max(0, rooms.size() - 1);
+        layoutSpaces();
+        if (spaceIndex >= spaceItems.size()) spaceIndex = Math.max(0, spaceItems.size() - 1);
+        if (zone == Z_SPACES && spaceItems.isEmpty()) zone = Z_ROOMS;
+        if ((zone == Z_ROOMS || zone == Z_SPACES) && rooms.isEmpty()) zone = Z_TOP;
+    }
+
+    private void selectRoom(int index) {
+        List<HomeAssistant.Room> rooms = ha.rooms();
+        if (index < 0 || index >= rooms.size() || index == roomIndex) return;
+        roomIndex = index;
+        spaceIndex = 0;
+        ui.edit().putString("spacesRoom", rooms.get(index).id).apply();
+        layoutSpaces();
+        for (Spring f : spaceFocus) f.snap(0);
+        spacesDirty = true;
+    }
+
+    /** The room's sections (Scenes, Lights, Shutters) and every tile's place, top to bottom. */
+    private void layoutSpaces() {
+        spaceItems.clear();
+        spaceSections.clear();
+        HomeAssistant.Room r = room();
+        if (r == null) return;
+        float y = S_TOP;
+        String[] heads = {Ui.tr("Cenas", "Scenes", "Escenas"), Ui.tr("Luzes", "Lights", "Luces"), Ui.tr("Persianas", "Shutters", "Persianas")};
+        List<List<HomeAssistant.Thing>> groups = java.util.Arrays.asList(r.shortcuts, r.lights, r.covers);
+        for (int g = 0; g < 3; g++) {
+            List<HomeAssistant.Thing> group = groups.get(g);
+            if (group.isEmpty()) continue;
+            int first = spaceItems.size();
+            int n = Math.min(group.size(), MAX_SPACES - first);
+            if (n <= 0) break;
+            spaceSections.add(new Object[] {heads[g], first, n, y + 30});
+            float top = y + S_HEAD;
+            for (int i = 0; i < n; i++) {
+                int col = (int) (i % S_COLS), row = (int) (i / S_COLS);
+                float x = MARGIN + col * (S_TILE_W + S_GAP), ty = top + row * (S_TILE_H + S_ROW_GAP);
+                spaceRects[first + i].set(x * k, ty * k, (x + S_TILE_W) * k, (ty + S_TILE_H) * k);
+                spaceItems.add(group.get(i));
+            }
+            int rows = (int) Math.ceil(n / S_COLS);
+            y = top + rows * (S_TILE_H + S_ROW_GAP) - S_ROW_GAP + S_SECTION_GAP;
+        }
+    }
+
+    private boolean moveSpaces(int dx, int dy) {
+        if (controlThing != null) {     // the slider: up and down change it
+            int d = dy != 0 ? -dy : dx;
+            if (d == 0) return true;
+            int next = stepValue(controlValue, d, controlThing.kind == HomeAssistant.COVER);
+            if (next != controlValue) {
+                controlValue = next;
+                handler.removeCallbacks(controlSend);
+                handler.postDelayed(controlSend, 350);      // sent once the value rests: no request per press
+                controlPending = true;
+                click.move();
+                spacesDirty = true;
+                wake();
+            }
+            return true;
+        }
+        layoutSpaces();
+        if (zone == Z_ROOMS) {
+            if (dx != 0) {
+                int before = roomIndex;
+                selectRoom(Math.max(0, Math.min(ha.rooms().size() - 1, roomIndex + dx)));    // like the tabs: focus picks
+                if (roomIndex == before) return true;
+            } else if (dy < 0) {
+                zone = Z_TOP;
+                topIndex = tab;
+            } else {
+                if (spaceItems.isEmpty()) return true;
+                zone = Z_SPACES;
+                spaceIndex = Math.min(spaceIndex, spaceItems.size() - 1);
+            }
+        } else {
+            int next = neighbor(spaceIndex, dx, dy);
+            if (next < 0 && dy < 0) {
+                zone = Z_ROOMS;     // up from the first row: the rooms
+            } else if (next < 0) {
+                return true;
+            } else {
+                spaceIndex = next;
+            }
+        }
+        retarget(false);
+        click.move();
+        return true;
+    }
+
+    /** The tile beside (dx) or in the row above or below (dy) the given one, by where it sits; -1 if none. */
+    private int neighbor(int from, int dx, int dy) {
+        RectF a = spaceRects[from];
+        int best = -1;
+        float bestScore = Float.MAX_VALUE;
+        for (int i = 0; i < spaceItems.size(); i++) {
+            if (i == from) continue;
+            RectF b = spaceRects[i];
+            float ddx = b.centerX() - a.centerX(), ddy = b.centerY() - a.centerY();
+            if (dx != 0 && (Math.abs(ddy) > 1 || Math.signum(ddx) != dx)) continue;
+            if (dy != 0 && (Math.signum(ddy) != dy || Math.abs(ddy) < 1)) continue;
+            float score = dx != 0 ? Math.abs(ddx) : Math.abs(ddy) * 4 + Math.abs(ddx);
+            if (score < bestScore) {
+                bestScore = score;
+                best = i;
+            }
+        }
+        return best;
+    }
+
+    private static int stepValue(int value, int d, boolean cover) {
+        if (cover) return Math.max(0, Math.min(100, (Math.round(value / 10f) + d) * 10));
+        int i = 0;      // brightness: fine steps at the bottom (1 %, 5 %) for a dim room
+        while (i < BRIGHTNESS_STEPS.length - 1 && BRIGHTNESS_STEPS[i] < value) i++;
+        if (d > 0) {
+            if (BRIGHTNESS_STEPS[i] == value || BRIGHTNESS_STEPS[i] < value) i++;
+        } else {
+            i--;
+        }
+        return BRIGHTNESS_STEPS[Math.max(0, Math.min(BRIGHTNESS_STEPS.length - 1, i))];
+    }
+
+    private HomeAssistant.Thing focusedThing() {
+        return zone == Z_SPACES && spaceIndex < spaceItems.size() ? spaceItems.get(spaceIndex) : null;
+    }
+
+    private void activateSpaces() {
+        if (controlThing != null) {
+            closeControl(false);
+            return;
+        }
+        if (zone == Z_ROOMS) {
+            layoutSpaces();
+            if (spaceItems.isEmpty()) return;
+            zone = Z_SPACES;
+            retarget(false);
+            click.move();
+            return;
+        }
+        HomeAssistant.Thing t = focusedThing();
+        if (t == null) return;
+        if (!t.available) {
+            showToast(Ui.tr("Indisponível no Home Assistant", "Unavailable in Home Assistant", "No disponible en Home Assistant"));
+            return;
+        }
+        click.open();
+        if (t.kind == HomeAssistant.COVER) {
+            ha.setPosition(t, t.position > 0 ? 0 : 100);
+        } else {
+            ha.press(t);
+            if (t.kind == HomeAssistant.SCRIPT || t.kind == HomeAssistant.SCENE) showToast(t.name + Ui.tr(": ativada", ": on", ": activada"));
+        }
+        spacesDirty = true;
+    }
+
+    /** Holding OK on a dimmable light or a shutter opens its slider. */
+    private boolean canControl() {
+        HomeAssistant.Thing t = tab == TAB_SPACES && controlThing == null ? focusedThing() : null;
+        return t != null && t.available && ((t.kind == HomeAssistant.LIGHT && t.dimmable) || t.kind == HomeAssistant.COVER);
+    }
+
+    private void holdOk() {
+        if (canControl()) openControl();
+        else startReorder();
+    }
+
+    private void openControl() {
+        handler.removeCallbacks(holdStart);
+        holdArmed = false;
+        okHeld = true;      // the release that ends this hold does nothing
+        HomeAssistant.Thing t = focusedThing();
+        if (t == null) return;
+        controlThing = t;
+        controlValue = t.kind == HomeAssistant.COVER ? Math.max(0, t.position) : t.on ? Math.max(1, t.brightness) : 0;
+        control.target = 1;
+        aim(spaceFocus, -1, false);
+        click.open();
+        spacesDirty = true;
+        wake();
+    }
+
+    private void closeControl(boolean quiet) {
+        if (controlThing == null) return;
+        if (controlPending) {       // the last step hadn't gone out yet
+            handler.removeCallbacks(controlSend);
+            sendControl();
+        }
+        controlThing = null;
+        control.target = 0;
+        if (quiet) control.snap(0);
+        else click.move();
+        retarget(false);
+        spacesDirty = true;
+        wake();
+    }
+
+    private void sendControl() {
+        controlPending = false;
+        HomeAssistant.Thing t = controlThing;
+        if (t == null) return;
+        if (t.kind == HomeAssistant.COVER) ha.setPosition(t, controlValue);
+        else ha.setBrightness(t, controlValue);
+    }
+
+    private void drawSpaces(Canvas c) {
+        if (labelPaint == null || tab != TAB_SPACES) return;
+        applyTone();
+        spacesLoading = false;
+        List<HomeAssistant.Room> rooms = ha.rooms();
+        if (rooms.isEmpty()) {
+            if (ha.error() != null) {
+                c.drawText(Ui.tr("Não deu para falar com o Home Assistant", "Couldn't reach Home Assistant", "No se pudo conectar con Home Assistant"),
+                        MARGIN * k, (S_TOP + 40) * k, lCardTitle);
+                c.drawText(fit(ha.error(), lCardMeta, 1500 * k, 0), MARGIN * k, (S_TOP + 82) * k, lCardMeta);
+            } else if (ha.loaded()) {
+                c.drawText(Ui.tr("Nenhum cômodo com luzes ou persianas no Home Assistant", "No rooms with lights or shutters in Home Assistant"),
+                        MARGIN * k, (S_TOP + 40) * k, lCardMeta);
+            } else {
+                spinPaint.setColor(tone(L_DIM, 0xFF98989D));
+                Ui.spinner(c, MARGIN * k + 22 * k, (S_TOP + 30) * k, 20 * k, SystemClock.uptimeMillis() / 1000f * 1.3f, spinPaint);
+                spacesLoading = true;
+            }
+            return;
+        }
+        if (roomIndex >= rooms.size()) roomIndex = rooms.size() - 1;
+        layoutSpaces();
+        float switcherRight = drawRooms(c, rooms);
+        drawRoomStatus(c, room(), switcherRight);
+        float cv = Ui.clamp(control.value);
+        for (Object[] sec : spaceSections) c.drawText((String) sec[0], MARGIN * k, (float) sec[3] * k, lSection);
+        int focused = zone == Z_SPACES ? spaceIndex : -1;
+        for (int i = 0; i < spaceItems.size(); i++) if (i != focused) drawSpaceTile(c, spaceItems.get(i), spaceRects[i], spaceFocus[i].value);
+        if (focused >= 0 && focused < spaceItems.size()) drawSpaceTile(c, spaceItems.get(focused), spaceRects[focused], spaceFocus[focused].value);
+        HomeAssistant.Thing t = focusedThing();
+        if (t != null && cv < 0.01f && t.available) {
+            String hint = t.kind == HomeAssistant.COVER ? Ui.tr("Segure OK para ajustar a abertura", "Hold OK to set the position", "Mantén OK para ajustar la apertura")
+                    : t.kind == HomeAssistant.LIGHT && t.dimmable ? Ui.tr("Segure OK para ajustar o brilho", "Hold OK to set the brightness", "Mantén OK para ajustar el brillo")
+                    : null;
+            if (hint != null) c.drawText(hint, MARGIN * k, (SAFE_BOTTOM - 6) * k, lCardMeta);
+        }
+        if (control.value > 0.002f) drawControl(c, cv);
+    }
+
+    /** The rooms as a segmented control, the open one as the white pill (the focus grows it); returns its right edge. */
+    private float drawRooms(Canvas c, List<HomeAssistant.Room> rooms) {
+        int n = Math.min(rooms.size(), roomRects.length);
+        float pad = 28 * k, inset = 5 * k, height = 56 * k, cy = L_FILTER_CY * k, total = 2 * inset;
+        for (int i = 0; i < n; i++) total += lTab.measureText(rooms.get(i).name) + 2 * pad;
+        float left = MARGIN * k - 26 * k, focus = Ui.clamp(roomFocus.value);
+        tmp.set(left, cy - height / 2, left + total, cy + height / 2);
+        fill.setShader(null);
+        fill.setColor(tone(0x14000000, 0x26FFFFFF));
+        c.drawRoundRect(tmp, height / 2, height / 2, fill);
+        float x = left + inset;
+        for (int i = 0; i < n; i++) {
+            String label = rooms.get(i).name;
+            float width = lTab.measureText(label) + 2 * pad, segment = height - 2 * inset;
+            roomRects[i].set(x, cy - segment / 2, x + width, cy + segment / 2);
+            if (i == roomIndex) {
+                float scale = 1 + 0.06f * focus;
+                cell.set(roomRects[i].centerX() - width * scale / 2, cy - segment * scale / 2, roomRects[i].centerX() + width * scale / 2, cy + segment * scale / 2);
+                if (focus > 0.01f) {
+                    tmp.set(cell);
+                    tmp.offset(0, 7 * k * focus);
+                    shadow.setColor(Ui.alpha(0xFF000000, tone(0.2f, 0.4f) * focus));
+                    shadows.draw(c, tmp, cell.height() / 2, SHADOW_BLUR * k, shadow);
+                }
+                fill.setColor(blend(tone(0xFFFFFFFF, 0x40FFFFFF), 0xFFFFFFFF, focus));
+                c.drawRoundRect(cell, cell.height() / 2, cell.height() / 2, fill);
+            }
+            Paint paint = i == roomIndex ? lTabOn : lTab;
+            if (i == roomIndex) lTabOn.setColor(blend(tone(L_INK, WHITE), L_INK, focus));
+            c.drawText(label, roomRects[i].centerX() - paint.measureText(label) / 2, cy + Ui.halfCap(paint), paint);
+            x += width;
+        }
+        return left + total;
+    }
+
+    /** The room's climate and what's open, right-aligned on the rooms' row: symbol, value; symbol, value. */
+    private void drawRoomStatus(Canvas c, HomeAssistant.Room r, float minLeft) {
+        if (r == null) return;
+        List<String[]> parts = new ArrayList<>();
+        if (r.temperature != null) parts.add(new String[] {"thermostat", r.temperature});
+        if (r.humidity != null) parts.add(new String[] {"humidity", r.humidity});
+        if (r.open.size() == 1) parts.add(new String[] {"window", r.open.get(0) + Ui.tr(" aberta", " open", " abierta")});
+        else if (r.open.size() > 1) parts.add(new String[] {"window", r.open.size() + Ui.tr(" abertas", " open", " abiertas")});
+        if (parts.isEmpty()) return;
+        float icon = 30 * k, gap = 10 * k, between = 32 * k, cy = L_FILTER_CY * k;
+        float total = 0;
+        for (String[] p : parts) total += icon + gap + sStatus.measureText(p[1]);
+        total += between * (parts.size() - 1);
+        float x = CONTENT_R * k - total;
+        if (x < minLeft + 40 * k) return;       // no room beside the switcher: the rooms come first
+        int color = tone(L_DIM, 0xFF98989D);
+        sStatus.setColor(color);
+        boolean openSomething = !r.open.isEmpty();
+        for (int i = 0; i < parts.size(); i++) {
+            String[] p = parts.get(i);
+            boolean alert = openSomething && p[0].equals("window");
+            int ink = alert ? 0xFFFF9F0A : color;       // systemOrange: something left open
+            Symbols.draw(getContext(), c, p[0], x + icon / 2, cy, 26 * k, ink);
+            x += icon + gap;
+            sStatus.setColor(ink);
+            c.drawText(p[1], x, cy + Ui.halfCap(sStatus), sStatus);
+            x += sStatus.measureText(p[1]) + between;
+        }
+    }
+
+    /**
+     * A tile, as in Apple's Home app: a colored circle with the symbol on the left, the name and its state beside it.
+     * On, the tile is bright and the circle takes the thing's color (amber light, blue shutter); off, a quiet dark
+     * tile. Scenes keep their orange. Focused: it grows and lifts, with the rim the other tabs use.
+     */
+    private void drawSpaceTile(Canvas c, HomeAssistant.Thing t, RectF base, float f) {
+        float fc = Ui.clamp(f), s = 1 + 0.06f * f, r0 = S_RADIUS * k;
+        float cx = base.centerX(), cy = base.centerY(), bw = base.width(), bh = base.height();
+        cell.set(cx - bw * s / 2, cy - bh * s / 2, cx + bw * s / 2, cy + bh * s / 2);
+        float r = r0 * s;
+        boolean scene = t.kind == HomeAssistant.SCRIPT || t.kind == HomeAssistant.SCENE;
+        boolean lit = t.available && !scene && (t.kind == HomeAssistant.COVER ? t.position > 0 : t.on);
+        int saved = t.available ? -1 : c.saveLayerAlpha(cell.left - 40 * k, cell.top - 40 * k, cell.right + 40 * k, cell.bottom + 60 * k, 110);
+        tmp.set(cell);
+        tmp.offset(0, (4 + 14 * f) * k);
+        shadowDeep.setColor(Ui.alpha(0xFF000000, tone(0.10f, 0.28f) + tone(0.16f, 0.3f) * fc));
+        shadows.drawCached(c, tmp, r, DEEP_BLUR * k, shadowDeep);
+        tileFill.setShader(null);
+        tileFill.setAlpha(255);
+        tileFill.setColor(lit ? tone(0xFFFFFFFF, 0xFFF2F2F7) : tone(0xB3FFFFFF, 0xFF2C2C2E));
+        c.drawRoundRect(cell, r, r, tileFill);
+        if (!lit) tileEdge(c, cell, r);
+        int accent = t.kind == HomeAssistant.COVER ? 0xFF0A84FF : scene ? 0xFFFF9F0A : 0xFFFFB340;
+        float rad = 32 * k * s, ix = cell.left + (30 * k + 32 * k) * s, iy = cell.centerY();
+        tileFill.setColor(lit || scene ? accent : tone(0x14000000, 0x29FFFFFF));
+        c.drawCircle(ix, iy, rad, tileFill);
+        String symbol = scene ? "movie" : t.kind == HomeAssistant.COVER ? (lit ? "shades" : "shades_closed") : "lightbulb";
+        Symbols.draw(getContext(), c, symbol, ix, iy, 30 * k * s, lit || scene ? WHITE : tone(L_DIM, 0xFFD1D1D6));
+        boolean ink = lit || night < 0.5f;
+        float tx = ix + rad + 22 * k * s, maxW = cell.right - tx - 22 * k;
+        sName.setColor(ink ? L_INK : WHITE);
+        sState.setColor(ink ? L_DIM : 0xFF98989D);
+        c.save();
+        c.scale(s, s, tx, iy);
+        c.drawText(fit(t.name, sName, maxW / s, 2), tx, iy - 6 * k, sName);
+        c.drawText(stateText(t), tx, iy + 30 * k, sState);
+        c.restore();
+        if (fc > 0.01f) {
+            rim.setShader(null);
+            rim.setColor(Ui.alpha(lit ? 0xFF000000 : 0xFFFFFFFF, (lit ? 0.12f : 0.6f) * fc));
+            rim.setStrokeWidth(2.5f * k);
+            c.drawRoundRect(cell, r, r, rim);
+        }
+        if (saved >= 0) c.restoreToCount(saved);
+    }
+
+    private static String stateText(HomeAssistant.Thing t) {
+        if (!t.available) return Ui.tr("Indisponível", "Unavailable", "No disponible");
+        switch (t.kind) {
+            case HomeAssistant.SCRIPT:
+            case HomeAssistant.SCENE:
+                return Ui.tr("Cena", "Scene", "Escena");
+            case HomeAssistant.COVER:
+                if ("opening".equals(t.state)) return Ui.tr("Abrindo…", "Opening…", "Abriendo…");
+                if ("closing".equals(t.state)) return Ui.tr("Fechando…", "Closing…", "Cerrando…");
+                if (t.position <= 0) return Ui.tr("Fechada", "Closed", "Cerrada");
+                if (t.position >= 100) return Ui.tr("Aberta", "Open", "Abierta");
+                return t.position + Ui.tr("% aberta", "% open", "% abierta");
+            default:
+                if (!t.on) return Ui.tr("Desligada", "Off", "Apagada");
+                return t.dimmable && t.brightness > 0 ? t.brightness + "%" : Ui.tr("Ligada", "On", "Encendida");
+        }
+    }
+
+    /**
+     * The slider, as Apple's Home: the screen dims, a tall capsule fills from the bottom with the level, the name
+     * above it and the value below. Up and down change it; OK or Back close.
+     */
+    private void drawControl(Canvas c, float v) {
+        HomeAssistant.Thing t = controlThing;
+        c.drawColor(Ui.alpha(0xFF000000, 0.62f * v));
+        if (t == null) return;      // closing: only the veil fades
+        float pw = 210 * k, ph = 470 * k, scale = 0.94f + 0.06f * v;
+        float cx = w / 2f, cy = 560 * k;
+        c.save();
+        c.scale(scale, scale, cx, cy);
+        tmp.set(cx - pw / 2, cy - ph / 2, cx + pw / 2, cy + ph / 2);
+        float r = pw / 2 * 0.62f;
+        tileFill.setShader(null);
+        tileFill.setColor(Ui.alpha(0xFF3A3A3C, v));
+        c.drawRoundRect(tmp, r, r, tileFill);
+        float level = controlValue / 100f;
+        c.save();
+        clip.reset();
+        clip.addRoundRect(tmp, r, r, Path.Direction.CW);
+        c.clipPath(clip);
+        cell.set(tmp.left, tmp.bottom - ph * level, tmp.right, tmp.bottom);
+        tileFill.setColor(Ui.alpha(0xFFF2F2F7, v));
+        c.drawRect(cell, tileFill);
+        c.restore();
+        boolean cover = t.kind == HomeAssistant.COVER;
+        String symbol = cover ? (controlValue > 0 ? "shades" : "shades_closed") : "lightbulb";
+        boolean underFill = tmp.bottom - 70 * k > tmp.bottom - ph * level;
+        Symbols.draw(getContext(), c, symbol, cx, tmp.bottom - 70 * k, 44 * k,
+                Ui.alpha(underFill ? (cover ? 0xFF0A84FF : 0xFFFFB340) : 0xFFD1D1D6, v));
+        sControlTitle.setColor(Ui.alpha(WHITE, v));
+        c.drawText(t.name, cx, tmp.top - 54 * k, sControlTitle);
+        sControlValue.setColor(Ui.alpha(WHITE, v));
+        String value = controlValue == 0 ? (cover ? Ui.tr("Fechada", "Closed", "Cerrada") : Ui.tr("Desligada", "Off", "Apagada"))
+                : controlValue + "%";
+        c.drawText(value, cx, tmp.bottom + 86 * k, sControlValue);
+        lCardMeta.setColor(Ui.alpha(0xFF98989D, v));
+        lCardMeta.setTextAlign(Paint.Align.CENTER);
+        c.drawText(Ui.tr("↑ ↓ para ajustar · OK para concluir", "↑ ↓ to adjust · OK when done", "↑ ↓ para ajustar · OK para terminar"),
+                cx, tmp.bottom + 140 * k, lCardMeta);
+        lCardMeta.setTextAlign(Paint.Align.LEFT);
+        lCardMeta.setColor(tone(L_DIM, 0xFF98989D));
+        c.restore();
     }
 
     // MARK: - Helpers
