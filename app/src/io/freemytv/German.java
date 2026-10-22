@@ -10,6 +10,13 @@ final class German {
             case "All Apps": return "Alle Apps";
             case "Settings": return "Einstellungen";
             case "Launcher Settings": return "Launcher-Einstellungen";
+            // The New tab (Recs.fetchNew, seasons)
+            case "Season ": return "Staffel ";
+            case "episode": return "Folge";
+            case "episodes": return "Folgen";
+            case "to watch": return "offen";
+            case "Nothing new on Plex yet": return "Noch nichts Neues auf Plex";
+            case "Nothing to continue yet: start something on Plex": return "Noch nichts zum Weiterschauen: starte etwas auf Plex";
             // Updates over the home network (Updates, Launcher Settings → Update)
             case "Checking for updates…": return "Suche nach Updates…";
             case "New version ready": return "Neue Version bereit";

@@ -10,6 +10,11 @@ final class Spanish {
             case "All Apps": return "Todas las apps";
             case "Settings": return "Ajustes";
             case "Launcher Settings": return "Ajustes del launcher";
+            // The New tab (Recs.fetchNew, seasons)
+            case "Season ": return "Temporada ";
+            case "episode": return "episodio";
+            case "episodes": return "episodios";
+            case "to watch": return "por ver";
             // Updates over the home network (Updates, Launcher Settings → Update)
             case "Checking for updates…": return "Buscando actualizaciones…";
             case "New version ready": return "Nueva versión lista";

@@ -99,16 +99,16 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private static final float PEEK_TILE_TOP = 1004, APPS_TILE_TOP = 298;
     private static final float L_DATE_BASE = 330, L_CLOCK_BASE = 540, L_WEATHER_BASE = 626, L_QUOTES_BASE = 694;
     private static final int L_INK = 0xFF1D1D1F, L_DIM = 0xFF6E6E73, L_FAINT = 0xFF8E8E93;
-    private static final String[] TABS = {"Continuar", "Explorar", "Categorias", "Apps"};
-    private static final String[] TABS_RU = {"Продолжить", "Обзор", "Категории", "Приложения"};
-    private static final String[] TABS_EN = {"Continue", "Explore", "Browse", "Apps"};
-    private static final String[] TABS_ES = {"Continuar", "Explorar", "Categorías", "Apps"};
-    private static final String[] TABS_DE = {"Weiter", "Entdecken", "Kategorien", "Apps"};
+    private static final String[] TABS = {"Continuar", "Novidades", "Descobrir", "Categorias", "Apps"};
+    private static final String[] TABS_RU = {"Продолжить", "Новое", "Обзор", "Категории", "Приложения"};
+    private static final String[] TABS_EN = {"Continue", "New", "Discover", "Browse", "Apps"};
+    private static final String[] TABS_ES = {"Continuar", "Novedades", "Descubrir", "Categorías", "Apps"};
+    private static final String[] TABS_DE = {"Weiter", "Neu", "Entdecken", "Kategorien", "Apps"};
     /**
      * Tabs on the left (Continue, Explore, Browse, Apps); the round buttons on the right take the indices after them.
      * Apps is the shelf of apps with its shortcuts, the drawer pinned open; Down from the carousel jumps into it.
      */
-    private static final int TABS_N = 4, TAB_CONTINUE = 0, TAB_EXPLORE = 1, TAB_BROWSE = 2, TAB_APPS = 3;
+    private static final int TABS_N = 5, TAB_CONTINUE = 0, TAB_NEW = 1, TAB_DISCOVER = 2, TAB_BROWSE = 3, TAB_APPS = 4;
     private static final int Z_TOP = 4, Z_CARDS = 5, Z_FILTER = 10;     // Z_FILTER: All / Movies / Shows in Browse
 
     private final Activity activity;
@@ -132,7 +132,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private final Layer sky, browseLayer, peekLayer, cardsLayer, heroLayer, status, platter, tiles, drawerLayer, sheetLayer, detailLayer, toastLayer;
     /** The carousel first (the shelf lives in the Apps tab); without a TMDB key there is no carousel, and the shelf is the home. */
     private int zone = Config.TMDB_KEY.trim().isEmpty() ? Z_SHELF : Z_CARDS;
-    private int appsReturnTab = TAB_EXPLORE;
+    private int appsReturnTab = TAB_DISCOVER;
 
     // Night look (like Apple's "Automatic" appearance): darker from sunset to sunrise, with a 2 s transition.
     private static final long NIGHT_MS = 2000;
@@ -145,7 +145,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private Shader nightGradient;
 
     // At the top: tabs (0 to TABS_N - 1) and icon-only buttons after them; below, the carousel of cards
-    private int tab = TAB_EXPLORE, topIndex = TAB_EXPLORE, cardIndex;
+    private int tab = TAB_DISCOVER, topIndex = TAB_DISCOVER, cardIndex;
     private boolean keyTouched;     // set by the first key: the home screen then stops choosing the tab by itself
     private long lastKeyAt;         // uptime of the last key: an update installs only when nobody is using the screen
     // Browse tab: the genres first; OK on one shows its titles (browseGenre >= 0) and Back returns to the genres.
@@ -396,6 +396,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             data.refreshIfStale();
             recs.refreshIfStale();
             recs.refreshContinue();
+            recs.refreshNew();
             checkNotices();
             maybeUpdate();
             updatePalette();
@@ -475,6 +476,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         data.refreshIfStale();
         recs.refreshIfStale();
         recs.refreshContinueNow();      // coming back from watching something: its progress has moved
+        recs.refreshNew();
         if (tvInputs != null) tvInputs.registerCallback(inputCallback, handler);
         handler.postDelayed(tick, 15_000);
         checkNotices();
@@ -565,7 +567,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         wake();
         detailDirty = true;     // the poster may have just arrived
         browseDirty = true;     // so may a Browse tile
-        if (!keyTouched && tab == TAB_EXPLORE && !recs.continueList().isEmpty()) selectTab(TAB_CONTINUE);
+        if (!keyTouched && tab == TAB_DISCOVER && !recs.continueList().isEmpty()) selectTab(TAB_CONTINUE);
         updatePicks();
     }
 
@@ -831,7 +833,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         sheetLayer.setScaleX(scale);
         sheetLayer.setScaleY(scale);
         browseLayer.setVisibility(tab == TAB_BROWSE && home > 0.001f ? VISIBLE : INVISIBLE);
-        boolean peek = picksOn() && (tab == TAB_CONTINUE || tab == TAB_EXPLORE) && home > 0.001f && dc < 0.99f;
+        boolean peek = picksOn() && (tab == TAB_CONTINUE || tab == TAB_NEW || tab == TAB_DISCOVER) && home > 0.001f && dc < 0.99f;
         peekLayer.setVisibility(peek ? VISIBLE : INVISIBLE);
         peekLayer.setAlpha(home * (1 - dc));
         peekLayer.setTranslationY(shelfLift - restDown);     // the label goes up with the shelf
@@ -3037,7 +3039,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private void updateCards() {
         List<Recs.Pick> list = tab == TAB_APPS ? new ArrayList<>()
                 : tab == TAB_CONTINUE ? recs.continueList()
-                : tab == TAB_EXPLORE ? recs.all(exploreKind)
+                : tab == TAB_NEW ? recs.newList()
+                : tab == TAB_DISCOVER ? recs.all(exploreKind)
                 : browseGenre < 0 ? recs.genreCards() : recs.genreList(browseGenre, browseKind);
         if (!samePicks(list, cards)) {
             cards = list;
@@ -3096,7 +3099,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     }
 
     private void leaveApps() {
-        selectTab(appsReturnTab == TAB_APPS ? TAB_EXPLORE : appsReturnTab);
+        selectTab(appsReturnTab == TAB_APPS ? TAB_DISCOVER : appsReturnTab);
         zone = Z_CARDS;
         retarget(false);
     }
@@ -3129,7 +3132,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
 
     /** Home opens on Continue when something is in progress, on Explore otherwise. */
     private int defaultTab() {
-        return recs.continueList().isEmpty() ? TAB_EXPLORE : TAB_CONTINUE;
+        return recs.continueList().isEmpty() ? TAB_DISCOVER : TAB_CONTINUE;
     }
 
     private void selectTab(int index) {
@@ -3229,7 +3232,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             if (i == tab) lTabOn.setColor(blend(tone(L_INK, WHITE), L_INK, focus));   // always dark on the white pill
             c.drawText(tabs()[i], r.centerX() - p.measureText(tabs()[i]) / 2, r.centerY() + Ui.halfCap(p), p);
         }
-        if (tab == TAB_EXPLORE || tab == TAB_BROWSE) drawFilter(c);
+        if (tab == TAB_DISCOVER || tab == TAB_BROWSE) drawFilter(c);
         if (tab != TAB_BROWSE && tab != TAB_APPS && HomeData.coinCount() > 0) drawQuotes(c);
     }
 
@@ -3265,9 +3268,11 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         for (int i = 0; i < n; i++) if (i != top && cardRects[i].right > 0 && cardRects[i].left < w) drawLightCard(c, i);
         if (top >= 0) drawLightCard(c, top);
         c.restore();
-        if (cards.isEmpty() && (tab == TAB_CONTINUE || tab == TAB_BROWSE)) {
+        if (cards.isEmpty() && (tab == TAB_CONTINUE || tab == TAB_NEW || tab == TAB_BROWSE)) {
             String note = tab == TAB_CONTINUE
                     ? Ui.tr("Nada para continuar ainda: comece algo no Plex", "Nothing to continue yet: start something on Plex", "Nada que continuar todavía: empieza algo en Plex")
+                    : tab == TAB_NEW ? (recs.newLoaded() ? Ui.tr("Nada novo no Plex por enquanto", "Nothing new on Plex yet", "Nada nuevo en Plex por ahora")
+                    : Ui.tr("Carregando…", "Loading…"))
                     : browseGenre >= 0 && !recs.genreLoading(browseGenre, browseKind)
                     ? Ui.tr("Nada disponível nos seus apps ou no Plex", "Nothing here on your apps or Plex")
                     : Ui.tr("Carregando…", "Loading…");
@@ -3440,7 +3445,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
 
     /** The All / Movies / Shows choice of the current tab: null (all), "movie" or "tv". */
     private String currentKind() {
-        return tab == TAB_EXPLORE ? exploreKind : browseKind;
+        return tab == TAB_DISCOVER ? exploreKind : browseKind;
     }
 
     private int browseKindIndex() {
@@ -3506,7 +3511,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
 
     /** Changing the filter reloads what is open (each genre and kind is remembered for a while) and is itself remembered. */
     private void setBrowseKind(String kind) {
-        if (tab == TAB_EXPLORE) {
+        if (tab == TAB_DISCOVER) {
             exploreKind = kind;
             ui.edit().putString("exploreKind", kind == null ? "" : kind).apply();
             cardIndex = 0;
@@ -3754,7 +3759,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
 
     private boolean moveLight(int dx, int dy) {
         if (tab == TAB_BROWSE && picksOn() && zone == Z_CARDS) return moveBrowseCards(dx, dy);
-        if (tab != TAB_CONTINUE && picksOn() && zone == Z_FILTER) return moveFilter(dx, dy);
+        if (tab != TAB_CONTINUE && tab != TAB_NEW && picksOn() && zone == Z_FILTER) return moveFilter(dx, dy);
         switch (zone) {
             case Z_SHELF:
                 // Up from an empty shelf too: move()'s older zones (the hero, the corner capsule) aren't drawn any more.
@@ -3773,7 +3778,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                     cardIndex = next;
                     focusCard(false);
                 } else if (dy < 0) {
-                    if (tab == TAB_EXPLORE) {
+                    if (tab == TAB_DISCOVER) {
                         zone = Z_FILTER;    // the All / Movies / Shows control sits between the carousel and the tabs
                     } else {
                         zone = Z_TOP;

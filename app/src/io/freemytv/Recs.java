@@ -62,6 +62,7 @@ final class Recs {
         String ratingLabel;             // "★ 8.4", made once by the home screen
         float progress;                 // Continue Watching: how far in you are (0 to 1), 0 = not started
         String showKey;                 // an episode's show (its Plex key), for the show's TMDB number
+        String plexType;                // "season" for a season in New (its link plays the first episode not watched)
     }
 
     interface Listener { void onRecs(); }
@@ -807,6 +808,182 @@ final class Recs {
         }
         if (minutes > 0) parts.add(Ui.tr(minutes >= 60 ? (minutes / 60) + " h " + (minutes % 60) + " min restantes" : minutes + " min restantes",
                 minutes >= 60 ? (minutes / 60) + "h " + (minutes % 60) + "m left" : minutes + " min left"));
+        p.meta = String.join(" · ", parts);
+        return p;
+    }
+
+    // MARK: - New (what arrived on your Plex server lately: movies, and shows by season)
+
+    private static final int NEW_MAX = 30;
+    private final List<Pick> newPicks = new ArrayList<>();
+    private volatile long newAt;
+    private volatile boolean newLoading;
+
+    /** What arrived on Plex lately and isn't watched yet, newest first: movies, and shows as whole seasons. */
+    List<Pick> newList() {
+        synchronized (newPicks) { return new ArrayList<>(newPicks); }
+    }
+
+    /** Whether the list has been asked for at least once (until then the tab says "Loading…"). */
+    boolean newLoaded() {
+        return newAt != 0;
+    }
+
+    /** Asks Plex again (not more than every 10 minutes; a minute after a failure); the listeners are told of changes. */
+    void refreshNew() {
+        if (!plexOn() || !installed(PLEX_PKG) || newLoading) return;
+        if (newAt != 0 && System.currentTimeMillis() - newAt < 10 * 60_000L) return;
+        newLoading = true;
+        detailIo.execute(() -> {
+            try {
+                List<Pick> fresh = fetchNew();
+                boolean changed;
+                synchronized (newPicks) {
+                    changed = fresh.size() != newPicks.size();
+                    for (int i = 0; i < fresh.size() && !changed; i++) {
+                        changed = !key(fresh.get(i)).equals(key(newPicks.get(i))) || !fresh.get(i).meta.equals(newPicks.get(i).meta);
+                    }
+                    if (changed) {
+                        newPicks.clear();
+                        newPicks.addAll(fresh);
+                    }
+                }
+                newAt = System.currentTimeMillis();
+                plexState = 1;
+                if (changed) notifyListeners();
+            } catch (Exception e) {
+                newAt = System.currentTimeMillis() - 9 * 60_000L;
+                plexState = -1;
+                AppLog.w("new: " + (e.getMessage() == null ? e.toString() : e.getMessage()));
+                notifyListeners();      // "Loading…" gives way to the empty note
+            } finally {
+                newLoading = false;
+            }
+        });
+    }
+
+    /**
+     * The newest unwatched movies and the seasons with episodes added lately, merged by date. Plex adds a show's
+     * episodes one by one: they're grouped into their season, which counts from its newest episode and shows once
+     * (with how many are left to watch), so a whole season waits there to be caught up on.
+     */
+    private List<Pick> fetchNew() throws Exception {
+        String machine = plexGet("/identity").getString("machineIdentifier");
+        List<Pick> found = new ArrayList<>();
+        Map<Pick, Long> added = new HashMap<>();
+        Map<String, Long> seasons = new LinkedHashMap<>();     // season key → its newest episode's date, newest first
+        JSONArray sections = plexGet("/library/sections").optJSONArray("Directory");
+        for (int i = 0; sections != null && i < sections.length(); i++) {
+            JSONObject section = sections.getJSONObject(i);
+            String type = section.optString("type");
+            if (!type.equals("movie") && !type.equals("show")) continue;
+            boolean movies = type.equals("movie");
+            JSONArray items = plexGet("/library/sections/" + section.getString("key") + "/recentlyAdded?includeGuids=1"
+                    + "&X-Plex-Container-Start=0&X-Plex-Container-Size=" + (movies ? 40 : 150)).optJSONArray("Metadata");
+            for (int j = 0; items != null && j < items.length(); j++) {
+                JSONObject o = items.getJSONObject(j);
+                String t = o.optString("type");
+                long at = o.optLong("addedAt");
+                if (t.equals("movie")) {
+                    if (o.optInt("viewCount") > 0) continue;        // seen already: not new to you
+                    Pick p = plexPick(o, "movie", machine);
+                    if (p == null) continue;
+                    if (p.meta.endsWith(" · Plex")) p.meta = p.meta.substring(0, p.meta.length() - 7);   // everything here is
+                    found.add(p);
+                    added.put(p, at);
+                } else if (t.equals("episode") || t.equals("season")) {
+                    String season = t.equals("season") ? o.optString("ratingKey") : o.optString("parentRatingKey");
+                    Long seen = seasons.get(season);
+                    if (!season.isEmpty() && (seen == null || seen < at)) seasons.put(season, at);
+                }
+            }
+        }
+        List<String> keys = new ArrayList<>(seasons.keySet());
+        if (keys.size() > NEW_MAX) keys = keys.subList(0, NEW_MAX);
+        if (!keys.isEmpty()) {
+            // The seasons, then their shows (summary, genre, cast, TMDB number), each in one request.
+            JSONArray meta = plexGet("/library/metadata/" + String.join(",", keys)).optJSONArray("Metadata");
+            List<JSONObject> left = new ArrayList<>();
+            List<String> shows = new ArrayList<>();
+            for (int i = 0; meta != null && i < meta.length(); i++) {
+                JSONObject s = meta.getJSONObject(i);
+                int total = s.optInt("leafCount"), watched = s.optInt("viewedLeafCount");
+                if (total > 0 && watched >= total) continue;       // watched it all
+                left.add(s);
+                String show = s.optString("parentRatingKey");
+                if (!show.isEmpty() && !shows.contains(show)) shows.add(show);
+            }
+            Map<String, JSONObject> showInfo = new HashMap<>();
+            if (!shows.isEmpty()) {
+                JSONArray info = plexGet("/library/metadata/" + String.join(",", shows) + "?includeGuids=1").optJSONArray("Metadata");
+                for (int i = 0; info != null && i < info.length(); i++) showInfo.put(info.getJSONObject(i).optString("ratingKey"), info.getJSONObject(i));
+            }
+            for (JSONObject s : left) {
+                Pick p = seasonPick(s, showInfo.get(s.optString("parentRatingKey")));
+                if (p == null) continue;
+                found.add(p);
+                added.put(p, seasons.get(s.optString("ratingKey")));
+            }
+        }
+        java.util.Collections.sort(found, (a, b) -> Long.compare(added.get(b), added.get(a)));
+        List<Pick> out = new ArrayList<>(found.subList(0, Math.min(NEW_MAX, found.size())));
+        // Watch plays the season's first episode not watched yet: asked only for the seasons that made the list.
+        for (Pick p : out) {
+            if (!"season".equals(p.plexType)) continue;
+            JSONArray episodes = plexGet("/library/metadata/" + p.plexKey + "/children").optJSONArray("Metadata");
+            String first = "";
+            for (int i = 0; episodes != null && i < episodes.length() && first.isEmpty(); i++) {
+                JSONObject e = episodes.getJSONObject(i);
+                if (e.optInt("viewCount") == 0) first = e.optString("ratingKey");
+            }
+            if (!first.isEmpty()) p.link = plexPlayLink(machine, first);
+        }
+        return out;
+    }
+
+    /** A season as a card: the show's art and name, the season and its episodes (and how many are left) in the details. */
+    private static Pick seasonPick(JSONObject s, JSONObject show) throws Exception {
+        String key = s.optString("ratingKey"), art = s.optString("art", s.optString("parentArt"));
+        if (key.isEmpty() || art.isEmpty()) return null;
+        Pick p = new Pick();
+        p.id = s.optInt("ratingKey");
+        p.kind = "tv";
+        p.plexType = "season";
+        p.title = s.optString("parentTitle");
+        p.plexKey = key;
+        p.showKey = s.optString("parentRatingKey");
+        p.backdrop = "plex" + key + "-" + Integer.toHexString(art.hashCode()) + ".jpg";
+        p.image = plexBase() + "/photo/:/transcode?width=" + Backdrop.W + "&height=" + Backdrop.H + "&minSize=1&upscale=1&url="
+                + URLEncoder.encode(art, "UTF-8");
+        String thumb = s.optString("thumb", s.optString("parentThumb"));
+        if (!thumb.isEmpty()) {
+            p.poster = plexBase() + "/photo/:/transcode?width=480&height=720&minSize=1&upscale=1&url=" + URLEncoder.encode(thumb, "UTF-8");
+        }
+        p.app = "plex";
+        p.pkg = PLEX_PKG;
+        p.detailed = true;
+        String guid = s.optString("parentGuid");
+        if (guid.startsWith("plex://")) p.discoverId = guid.substring(guid.lastIndexOf('/') + 1);
+        p.summary = s.optString("summary");
+        if (show != null) {
+            if (p.summary.isEmpty()) p.summary = show.optString("summary");
+            p.year = show.optString("year");
+            p.rating = (float) show.optDouble("audienceRating", show.optDouble("rating", 0));
+            JSONArray roles = show.optJSONArray("Role");
+            List<String> names = new ArrayList<>();
+            for (int i = 0; roles != null && i < roles.length() && names.size() < 3; i++) names.add(roles.getJSONObject(i).optString("tag"));
+            p.cast = String.join(", ", names);
+            JSONArray guids = show.optJSONArray("Guid");
+            for (int i = 0; guids != null && i < guids.length(); i++) {
+                String id = guids.getJSONObject(i).optString("id");
+                if (id.startsWith("tmdb://")) p.tmdb = Integer.parseInt(id.substring(7));
+            }
+        }
+        int total = s.optInt("leafCount"), watched = s.optInt("viewedLeafCount");
+        List<String> parts = new ArrayList<>();
+        parts.add(Ui.tr("Temporada ", "Season ") + s.optInt("index"));
+        if (total > 0) parts.add(total + " " + (total == 1 ? Ui.tr("episódio", "episode") : Ui.tr("episódios", "episodes")));
+        if (watched > 0) parts.add((total - watched) + " " + Ui.tr("por ver", "to watch"));
         p.meta = String.join(" · ", parts);
         return p;
     }
