@@ -87,23 +87,26 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private static final long TOAST_MS = 6000, FADE_MS = 800;
     /** Blur radii of the shadow and shadowDeep paints (Shadows needs them to draw the same blur on older TVs). */
     private static final float SHADOW_BLUR = 26, DEEP_BLUR = 30;
-    private static final int SKY = 0, HERO = 1, STATUS = 2, PLATTER = 3, TILES = 4, DRAWER = 5, SHEET = 6, TOAST = 7, DETAIL = 8, BROWSE = 9;
+    private static final int SKY = 0, HERO = 1, STATUS = 2, PLATTER = 3, TILES = 4, DRAWER = 5, SHEET = 6, TOAST = 7, DETAIL = 8, BROWSE = 9, PEEK = 10;
     private static final int Z_STATUS = 0, Z_HERO = 1, Z_SHELF = 2, Z_DRAWER = 3;
     private static final ExecutorService LOADER = Executors.newSingleThreadExecutor();
     // Light design (the L_ constants): title, tab bar, three recommendation cards and the shelf.
     // The tab bar is a 68 px capsule; the cards sit on the 5-column grid (the wide one spans 3).
-    private static final float L_TITLE_BASE = 130, L_TABBAR_TOP = 158, L_TABBAR_H = 68, L_CARDS_TOP = 316, L_CARD_H = 372;
-    private static final float L_TALL_W = 320, L_CARD_GAP = 40, L_BUTTON = 68, L_BUTTON_GAP = 20, L_BUTTON_CY = 103;
+    private static final float L_TITLE_BASE = 130, L_TABBAR_TOP = 158, L_TABBAR_H = 68, L_CARDS_TOP = 316, L_CARD_H = 530;
+    private static final float L_TALL_W = 340, L_CARD_GAP = 40, L_BUTTON = 68, L_BUTTON_GAP = 20, L_BUTTON_CY = 103;
     private static final float L_PLATTER_TOP = 814, L_TILE_H = 126;
     private static final float L_DATE_BASE = 330, L_CLOCK_BASE = 540, L_WEATHER_BASE = 626, L_QUOTES_BASE = 694;
     private static final int L_INK = 0xFF1D1D1F, L_DIM = 0xFF6E6E73, L_FAINT = 0xFF8E8E93;
-    private static final String[] TABS = {"Continuar", "Explorar", "Categorias"};
-    private static final String[] TABS_RU = {"Продолжить", "Обзор", "Категории"};
-    private static final String[] TABS_EN = {"Continue", "Explore", "Browse"};
-    private static final String[] TABS_ES = {"Continuar", "Explorar", "Categorías"};
-    private static final String[] TABS_DE = {"Weiter", "Entdecken", "Kategorien"};
-    /** Tabs on the left (Continue, Explore, Browse); the round buttons on the right take the indices after them. */
-    private static final int TABS_N = 3, TAB_CONTINUE = 0, TAB_EXPLORE = 1, TAB_BROWSE = 2;
+    private static final String[] TABS = {"Continuar", "Explorar", "Categorias", "Apps"};
+    private static final String[] TABS_RU = {"Продолжить", "Обзор", "Категории", "Приложения"};
+    private static final String[] TABS_EN = {"Continue", "Explore", "Browse", "Apps"};
+    private static final String[] TABS_ES = {"Continuar", "Explorar", "Categorías", "Apps"};
+    private static final String[] TABS_DE = {"Weiter", "Entdecken", "Kategorien", "Apps"};
+    /**
+     * Tabs on the left (Continue, Explore, Browse, Apps); the round buttons on the right take the indices after them.
+     * Apps is the shelf of apps with its shortcuts, the drawer pinned open; Down from the carousel jumps into it.
+     */
+    private static final int TABS_N = 4, TAB_CONTINUE = 0, TAB_EXPLORE = 1, TAB_BROWSE = 2, TAB_APPS = 3;
     private static final int Z_TOP = 4, Z_CARDS = 5, Z_FILTER = 10;     // Z_FILTER: All / Movies / Shows in Browse
 
     private final Activity activity;
@@ -124,8 +127,10 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         @Override public boolean clickable(int id) { return (id - 1) / 1000 != WIDGETS; }
     });
     private final RectF a11yRect = new RectF();
-    private final Layer sky, browseLayer, heroLayer, status, platter, tiles, drawerLayer, sheetLayer, detailLayer, toastLayer;
-    private int zone = Z_SHELF;
+    private final Layer sky, browseLayer, peekLayer, heroLayer, status, platter, tiles, drawerLayer, sheetLayer, detailLayer, toastLayer;
+    /** The carousel first (the shelf lives in the Apps tab); without a TMDB key there is no carousel, and the shelf is the home. */
+    private int zone = Config.TMDB_KEY.trim().isEmpty() ? Z_SHELF : Z_CARDS;
+    private int appsReturnTab = TAB_EXPLORE;
 
     // Night look (like Apple's "Automatic" appearance): darker from sunset to sunrise, with a 2 s transition.
     private static final long NIGHT_MS = 2000;
@@ -350,6 +355,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                 case SHEET: drawSheet(c); break;
                 case DETAIL: drawDetail(c); break;
                 case BROWSE: drawBrowse(c); break;
+                case PEEK: drawPeek(c); break;
                 default: drawToast(c); break;
             }
             scene.setOffset(0, 0);
@@ -406,13 +412,14 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         sheetLayer = new Layer(a, SHEET);
         detailLayer = new Layer(a, DETAIL);
         browseLayer = new Layer(a, BROWSE);
+        peekLayer = new Layer(a, PEEK);
         toastLayer = new Layer(a, TOAST);
         // Hardware layers on the GPU: only the one that changed is redrawn; moving, fading and scaling stay cheap.
         // Not on Android 9 to 11: on older GPUs (a Mi Box 3's Mali-450) redrawing and compositing a big layer on every
         // frame cost more than drawing straight to the screen (measured: focus on the picks 33 → 12 ms a frame, the
         // drawer 19 → 17 ms).
         for (View v : new View[] {browseLayer, heroLayer, status, platter, tiles, drawerLayer, sheetLayer, detailLayer}) v.setLayerType(Ui.LEGACY ? LAYER_TYPE_NONE : LAYER_TYPE_HARDWARE, null);
-        for (View v : new View[] {sky, browseLayer, heroLayer, status, platter, tiles, drawerLayer, sheetLayer, detailLayer, toastLayer}) {
+        for (View v : new View[] {sky, browseLayer, peekLayer, heroLayer, status, platter, tiles, drawerLayer, sheetLayer, detailLayer, toastLayer}) {
             v.setImportantForAccessibility(IMPORTANT_FOR_ACCESSIBILITY_NO);   // TalkBack reads the items (Spoken)
             addView(v);
         }
@@ -429,6 +436,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         sheetLayer.setVisibility(INVISIBLE);
         detailLayer.setVisibility(INVISIBLE);
         browseLayer.setVisibility(INVISIBLE);
+        peekLayer.setVisibility(INVISIBLE);
         scene.setMotion(0.6f, 0f);
         updatePalette();
         // First time: right away (a cold start opens with the apps already there); missing logos come from reload().
@@ -489,7 +497,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     void reset(boolean animated) {
         wake();
         cancelReorder(!animated);
-        zone = Z_SHELF;
+        zone = picksOn() ? Z_CARDS : Z_SHELF;
         shelfIndex = 0;
         sheetOpen = false;
         if (detailOpen) {
@@ -553,7 +561,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         int width = MeasureSpec.getSize(widthSpec), height = MeasureSpec.getSize(heightSpec);
         float kk = width / 1920f;
         measure(sky, width, height);
-        measure(heroLayer, width, Math.round(790 * kk));
+        measure(heroLayer, width, Math.round(1000 * kk));
         measure(status, Math.round(1160 * kk), Math.round(240 * kk));
         // Sized to what they draw (the glass and its shadow; the grown tiles and their shadows): smaller layers are
         // cheaper for the GPU to composite on every frame of the drawer animation.
@@ -563,6 +571,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         measure(sheetLayer, width, height);
         measure(detailLayer, width, height);
         measure(browseLayer, width, height);
+        measure(peekLayer, width, Math.round(170 * kk));
         measure(toastLayer, Math.round(1000 * kk), Math.round(220 * kk));
         setMeasuredDimension(width, height);
     }
@@ -584,6 +593,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         sheetLayer.setPivotX(width / 2f);
         sheetLayer.setPivotY(height / 2f);
         browseLayer.layout(0, 0, width, height);
+        peekLayer.layout(0, height - Math.round(170 * kk), width, height);
         detailLayer.layout(0, 0, width, height);
         detailLayer.setPivotX(width / 2f);
         detailLayer.setPivotY(height / 2f);
@@ -750,7 +760,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         boolean busy = tilesMoving || statusMoving || heroMoving || drawerItemsMoving || gridMoving || drawerMoving
                 || sheetMoving || detailMoving || toastFading || heroFading || bgFading || nightMoving || sheetOpen || sheet.value > 0.001f
                 || detailOpen || detail.value > 0.001f || browseMoving
-                || drawerOpen || drawer.value > 0.001f || toast != null || !toasts.isEmpty();
+                || (drawerOpen && tab != TAB_APPS) || drawer.value > 0.001f || toast != null || !toasts.isEmpty();
         idle = !busy;
         if (busy) Choreographer.getInstance().postFrameCallback(this);
         else Choreographer.getInstance().postFrameCallbackDelayed(this, 1000);
@@ -776,9 +786,11 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         float home = 1 - Math.max(s, dv), top = home * (1 - smoothstep(0, 0.32f, dc));
         float shift = SHIFT * k;
         float lift = -d * shift;
-        show(heroLayer, top, lift);
-        show(status, top, lift);
-        float shelfShown = tab == TAB_BROWSE ? 0 : home;     // Browse takes the whole screen: no app shelf
+        boolean apps = tab == TAB_APPS;
+        show(heroLayer, apps ? home : top, apps ? 0 : lift);        // Apps keeps the heading and tabs where they are
+        show(status, apps ? home : top, apps ? 0 : lift);
+        // The shelf shows in the Apps tab (and always without a carousel); Browse takes the whole screen.
+        float shelfShown = !picksOn() ? home : tab == TAB_BROWSE ? 0 : home * smoothstep(0, 0.5f, dc);
         show(platter, shelfShown, lift);
         show(tiles, shelfShown, lift);
         float da = home * smoothstep(0.1f, 0.6f, dc);
@@ -791,6 +803,9 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         sheetLayer.setScaleX(scale);
         sheetLayer.setScaleY(scale);
         browseLayer.setVisibility(tab == TAB_BROWSE && home > 0.001f ? VISIBLE : INVISIBLE);
+        boolean peek = picksOn() && (tab == TAB_CONTINUE || tab == TAB_EXPLORE) && home > 0.001f && dc < 0.99f;
+        peekLayer.setVisibility(peek ? VISIBLE : INVISIBLE);
+        peekLayer.setAlpha(home * (1 - dc));
         browseLayer.setAlpha(home);
         detailLayer.setVisibility(dv > 0.001f || detailOpen ? VISIBLE : INVISIBLE);
         detailLayer.setAlpha(dv);
@@ -1178,6 +1193,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
 
     private void setShelf(List<HomeApps.Item> list) {
         wake();
+        peekLayer.invalidate();     // the hint at the bottom shows the first apps
         cancelReorder(true);    // the list changed under the move (an app installed or removed)
         tileShaders = new LinearGradient[0];
         boolean same = list.size() == shelf.size();
@@ -1543,6 +1559,12 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     }
 
     private void closeDrawer() {
+        if (tab == TAB_APPS) {          // pinned open: up from the shortcuts only goes back to the shelf
+            zone = Z_SHELF;
+            for (Spring f : drawerFocus) f.snap(0);
+            if (!shelf.isEmpty() && drawerIndex < drawerRects.length) shelfIndex = nearest(tileRects, drawerRects[drawerIndex].centerX());
+            return;
+        }
         drawerOpen = false;
         drawer.target = 0;
         zone = Z_SHELF;
@@ -2296,6 +2318,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             return;             // Browse has no shelf to go back to
         } else if (sheetOpen) {
             closeSheet();
+        } else if (tab == TAB_APPS) {
+            leaveApps();
         } else if (zone == Z_DRAWER || zone == WIDGETS) {
             closeDrawer();
             retarget(false);
@@ -2962,15 +2986,13 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
 
     /** The three cards of the current tab (Explore, Movies, Shows) and the background taken from the first one. */
     private void updateCards() {
-        List<Recs.Pick> list = tab == TAB_CONTINUE ? recs.continueList()
+        List<Recs.Pick> list = tab == TAB_APPS ? new ArrayList<>()
+                : tab == TAB_CONTINUE ? recs.continueList()
                 : tab == TAB_EXPLORE ? recs.all(exploreKind)
                 : browseGenre < 0 ? recs.genreCards() : recs.genreList(browseGenre, browseKind);
         if (!samePicks(list, cards)) {
             cards = list;
             cardIndex = Math.min(cardIndex, Math.max(0, list.size() - 1));
-            if (zone == Z_CARDS && list.isEmpty() && tab != TAB_BROWSE) {
-                zone = Z_SHELF;
-            }
             retarget(false);
             layoutCards();
         }
@@ -2988,6 +3010,11 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
      * shelf, the most expensive thing on screen) then waits for the focus to rest on a card for a moment.
      */
     private void focusCard(boolean settled) {
+        if (tab == TAB_APPS) {
+            showBackdrop(null);     // a calm background behind the apps
+            heroDirty = true;
+            return;
+        }
         if (tab == TAB_BROWSE) {
             focusBrowse();
             return;
@@ -3010,6 +3037,20 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             wake();
         }
     };
+
+    /** Down from the carousel: into the Apps tab, focus on the first app; Back (or any other tab) returns. */
+    private void goApps() {
+        if (tab == TAB_APPS || !picksOn()) return;
+        appsReturnTab = tab;
+        selectTab(TAB_APPS);
+        zone = Z_SHELF;
+    }
+
+    private void leaveApps() {
+        selectTab(appsReturnTab == TAB_APPS ? TAB_EXPLORE : appsReturnTab);
+        zone = Z_CARDS;
+        retarget(false);
+    }
 
     private void enterGenre(Recs.Pick genre) {
         browseReturn = cardIndex;
@@ -3044,6 +3085,16 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
 
     private void selectTab(int index) {
         if (index == tab) return;
+        if (index == TAB_APPS) {            // the drawer pinned open: the shelf with its shortcuts
+            drawerOpen = true;
+            drawer.target = 1;
+            drawerDirty = true;
+            for (Spring f : drawerFocus) f.snap(0);
+        } else if (tab == TAB_APPS) {
+            drawerOpen = false;
+            drawer.target = 0;
+            for (Spring f : drawerFocus) f.snap(0);
+        }
         tab = index;
         browseGenre = -1;
         cardIndex = 0;
@@ -3129,9 +3180,9 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             if (i == tab) lTabOn.setColor(blend(tone(L_INK, WHITE), L_INK, focus));   // always dark on the white pill
             c.drawText(tabs()[i], r.centerX() - p.measureText(tabs()[i]) / 2, r.centerY() + Ui.halfCap(p), p);
         }
-        if (tab != TAB_CONTINUE) drawFilter(c);
+        if (tab == TAB_EXPLORE || tab == TAB_BROWSE) drawFilter(c);
         layoutCards();
-        int n = tab == TAB_BROWSE ? 0 : Math.min(cards.size(), MAX_CARDS);
+        int n = tab == TAB_BROWSE || tab == TAB_APPS ? 0 : Math.min(cards.size(), MAX_CARDS);
         int top = n == 0 ? -1 : Math.max(0, Math.min(n - 1, Math.round(cardPos.value)));
         // The cards that slide past the left margin disappear under it; the focused one is drawn last (it overlaps).
         c.save();
@@ -3139,7 +3190,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         for (int i = 0; i < n; i++) if (i != top && cardRects[i].right > 0 && cardRects[i].left < w) drawLightCard(c, i);
         if (top >= 0) drawLightCard(c, top);
         c.restore();
-        if (cards.isEmpty() && tab != TAB_EXPLORE) {
+        if (cards.isEmpty() && (tab == TAB_CONTINUE || tab == TAB_BROWSE)) {
             String note = tab == TAB_CONTINUE
                     ? Ui.tr("Nada para continuar ainda: comece algo no Plex", "Nothing to continue yet: start something on Plex", "Nada que continuar todavía: empieza algo en Plex")
                     : browseGenre >= 0 && !recs.genreLoading(browseGenre, browseKind)
@@ -3147,7 +3198,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                     : Ui.tr("Carregando…", "Loading…");
             c.drawText(note, MARGIN * k, (L_CARDS_TOP + 70) * k, lCardMeta);
         }
-        if (tab != TAB_BROWSE && HomeData.coinCount() > 0) drawQuotes(c);
+        if (tab != TAB_BROWSE && tab != TAB_APPS && HomeData.coinCount() > 0) drawQuotes(c);
     }
 
     private String greeting = "";
@@ -3304,6 +3355,57 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             row[slot][step] = out;
         }
         return out;
+    }
+
+    // MARK: - The hint at the bottom of Continue and Explore: Down is for the apps
+
+    /**
+     * All the apps as a row of small cards along the bottom, with "⌄ Apps" just above it: Down from the carousel opens
+     * them (the Apps tab). The cards shrink to fit if there are many.
+     */
+    private void drawPeek(Canvas c) {
+        if (labelPaint == null || shelf.isEmpty()) return;
+        applyTone();
+        int n = shelf.size();
+        float gap = 14 * k, pad = 22 * k;
+        float tileW = Math.min(116 * k, ((CONTENT_R - MARGIN) * k - 2 * pad - (n - 1) * gap) / n), tileH = tileW * 46f / 84f;
+        float total = 2 * pad + n * tileW + (n - 1) * gap, capH = tileH + 26 * k;
+        float x = (w - total) / 2, rowCy = h - 58 * k;
+        tmp.set(x, rowCy - capH / 2, x + total, rowCy + capH / 2);
+        fill.setShader(null);
+        fill.setColor(tone(0x1A000000, 0x33FFFFFF));
+        c.drawRoundRect(tmp, capH / 2, capH / 2, fill);
+        // "⌄ Apps", centered just above the row
+        String label = Ui.tr("Apps", "Apps");
+        float chevron = 30 * k, labelGap = 10 * k, labelW = chevron + labelGap + lCardMeta.measureText(label);
+        float lx = (w - labelW) / 2, ly = tmp.top - 22 * k;
+        Symbols.draw(getContext(), c, "chevron_down", lx + chevron / 2, ly - Ui.halfCap(lCardMeta), chevron, tone(0xFF6E6E73, 0xB3FFFFFF));
+        c.drawText(label, lx + chevron + labelGap, ly, lCardMeta);
+        float px = x + pad;
+        for (int i = 0; i < n; i++) {
+            HomeApps.Item item = shelf.get(i);
+            tmp.set(px, rowCy - tileH / 2, px + tileW, rowCy + tileH / 2);
+            if (item.tile != null) {
+                roundCrop(c, item.tile, tmp, 11 * k);
+            } else {                    // an app drawn as a logo on its card, in the colors the shelf gives it
+                int[] style = TILE_STYLE.get(item.key);
+                if (style != null) {
+                    tileFill.setShader(new LinearGradient(0, tmp.top, 0, tmp.bottom, style[0], style[1], Shader.TileMode.CLAMP));
+                    c.drawRoundRect(tmp, 11 * k, 11 * k, tileFill);
+                    tileFill.setShader(null);
+                } else {
+                    fill.setColor(0xFF161618);
+                    c.drawRoundRect(tmp, 11 * k, 11 * k, fill);
+                }
+                if (item.logo != null) {
+                    float fit = Math.min((tileW - 22 * k) / item.logo.getWidth(), (tileH - 14 * k) / item.logo.getHeight());
+                    float lw = item.logo.getWidth() * fit, lh = item.logo.getHeight() * fit;
+                    cell.set(tmp.centerX() - lw / 2, tmp.centerY() - lh / 2, tmp.centerX() + lw / 2, tmp.centerY() + lh / 2);
+                    c.drawBitmap(item.logo, null, cell, bitmapPaint);
+                }
+            }
+            px += tileW + gap;
+        }
     }
 
     // MARK: - Browse: full-screen grids
@@ -3660,8 +3762,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                         topIndex = tab;     // as on Apple TV: moving up to the tabs focuses the selected tab
                     }
                 } else {
-                    zone = Z_SHELF;
-                    if (!shelf.isEmpty()) shelfIndex = nearest(tileRects, tileRects.length, cardRects[cardIndex].centerX());
+                    goApps();       // down from the carousel: the apps
                 }
                 break;
             case Z_TOP:
@@ -3671,11 +3772,12 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                     topIndex = next;
                     if (topIndex < TABS_N) selectTab(topIndex);   // like Apple TV tabs: focusing a tab selects it
                 } else if (dy > 0) {
-                    if (cards.isEmpty()) {
-                        if (tab == TAB_BROWSE) return true;     // nothing to move to while the genres load
+                    if (tab == TAB_APPS) {
                         zone = Z_SHELF;
+                    } else if (cards.isEmpty() && tab == TAB_BROWSE) {
+                        return true;        // nothing to move to while the genres load
                     } else {
-                        zone = Z_CARDS;
+                        zone = Z_CARDS;     // (an empty carousel still lets Down reach the apps)
                     }
                 } else {
                     return true;
