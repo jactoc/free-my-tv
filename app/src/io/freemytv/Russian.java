@@ -21,7 +21,8 @@ final class Russian {
             case "Up Next": return "Продолжить просмотр";
             case "New on Plex": return "Новое на Plex";
             case "Start something new": return "Начните что-нибудь новое";
-            case "Trending on your apps": return "Популярное в ваших приложениях";
+            case "Trending now": return "Сейчас в тренде";
+            case "not installed on this TV": return "не установлено на этом телевизоре";
             case "Season ": return "Сезон ";
             case "episode": return "серия";
             case "episodes": return "серий";

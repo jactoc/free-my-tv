@@ -77,7 +77,7 @@ final class Recs {
     private static final int ANIMATION = 16;
     private static final long LIST_EVERY = 6 * 3600_000L;
     /** Bump when what is saved for each title changes (the saved list is discarded and fetched again). */
-    private static final int CACHE_VERSION = 7;
+    private static final int CACHE_VERSION = 8;
     private static final String PLEX_PKG = "com.plexapp.android";
     private static final int PLEX_MAX = 24;
     /** The carousel's length: every pick gets its details and image fetched in the background. */
@@ -106,6 +106,11 @@ final class Recs {
         {"okko", "okko", "ru.more.play"},
         {"crunchyroll", "crunchyroll", "com.crunchyroll.crunchyroid"},
         {"oneplay", "oneplay", "net.cme.voyo.cz.tvapp"},    // Czechia: Voyo and O2 TV became Oneplay, same app
+        {"raiplay", "raiplay", "it.rainet.androidtv"},      // Italy (free: TMDB lists it under "free")
+        // Italy's other services: Discover shows their titles, but without a TV app known here they can't be opened.
+        {"now", "now", ""},
+        {"mediaset infinity", "infinity", ""},
+        {"timvision", "timvision", ""},
     };
     private static final Map<String, String> SERVICE_NAME = new HashMap<>();
     static {
@@ -121,6 +126,10 @@ final class Recs {
         SERVICE_NAME.put("hotstar", "JioHotstar");
         SERVICE_NAME.put("okko", "Okko");
         SERVICE_NAME.put("crunchyroll", "Crunchyroll");
+        SERVICE_NAME.put("raiplay", "RaiPlay");
+        SERVICE_NAME.put("now", "NOW");
+        SERVICE_NAME.put("infinity", "Mediaset Infinity");
+        SERVICE_NAME.put("timvision", "TIMvision");
         SERVICE_NAME.put("oneplay", "Oneplay");
         SERVICE_NAME.put("plex", "Plex");
     }
@@ -216,10 +225,8 @@ final class Recs {
     List<Pick> now(String kind) {
         List<Pick> list = new ArrayList<>();
         if (!hasKey(context)) return list;    // no TMDB key: no recommendations
-        Map<String, Boolean> have = new HashMap<>();   // one look per app, not per title (this runs every 15 s)
         for (Pick p : picks) {
-            if ((kind == null || kind.equals(p.kind))
-                    && (!p.detailed || (p.pkg != null && have.computeIfAbsent(p.pkg, this::installed)))) list.add(p);   // app missing: skip
+            if ((kind == null || kind.equals(p.kind)) && (!p.detailed || p.app != null)) list.add(p);   // no service we know: skip
         }
         if (list.isEmpty()) return list;
         long hour = System.currentTimeMillis() / 3600_000L;
@@ -299,7 +306,7 @@ final class Recs {
                     tried++;
                     try {
                         if (!pick.detailed) fetchDetails(pick);
-                        if (pick.pkg != null) download(pick);
+                        if (pick.app != null) download(pick);
                     } catch (Exception e) {
                         failures++;
                         last = e.getMessage() == null ? e.toString() : e.getMessage();
@@ -340,10 +347,8 @@ final class Recs {
         if (!hasKey(context)) return out;
         java.util.Set<String> seen = new java.util.HashSet<>();
         for (Pick p : wanted()) if (hasImage(p) && seen.add(franchise(p.title))) out.add(p);
-        Map<String, Boolean> have = new HashMap<>();
         for (Pick p : picks) {
-            if (p.detailed && p.pkg != null && have.computeIfAbsent(p.pkg, this::installed) && hasImage(p)
-                    && seen.add(franchise(p.title))) out.add(p);
+            if (p.detailed && p.app != null && hasImage(p) && seen.add(franchise(p.title))) out.add(p);
         }
         return out;
     }
@@ -362,7 +367,7 @@ final class Recs {
         long sinceFail = System.currentTimeMillis() - failedAt;
         if (failedAt != 0 && sinceFail >= 0 && sinceFail < 10 * 60_000L) return;
         List<Pick> todo = new ArrayList<>();
-        for (Pick p : picks) if (!p.detailed || (p.pkg != null && !hasImage(p))) todo.add(p);
+        for (Pick p : picks) if (!p.detailed || (p.app != null && !hasImage(p))) todo.add(p);
         if (todo.isEmpty()) return;
         fetching = true;
         io.execute(() -> {
@@ -373,7 +378,7 @@ final class Recs {
                 for (Pick p : todo) {
                     try {
                         if (!p.detailed) fetchDetails(p);
-                        if (p.pkg != null) download(p);
+                        if (p.app != null) download(p);
                     } catch (Exception e) {
                         failures++;
                         last = e.getMessage() == null ? e.toString() : e.getMessage();
@@ -392,13 +397,15 @@ final class Recs {
         });
     }
 
-    /** The picks the carousel can show (its tabs filter by kind), whose details and images are fetched in the background. */
+    /**
+     * The picks the carousel can show (its tabs filter by kind), whose details and images are fetched in the background:
+     * the ones on a service we know, whether the TV has its app (`pkg`) or not (then Watch is off on the detail screen).
+     */
     List<Pick> wanted() {
         List<Pick> out = new ArrayList<>();
         java.util.Set<String> seen = new java.util.HashSet<>();
-        Map<String, Boolean> have = new HashMap<>();
         for (Pick p : picks) {
-            if (p.detailed && (p.pkg == null || !have.computeIfAbsent(p.pkg, this::installed))) continue;
+            if (p.detailed && p.app == null) continue;
             if (seen.add(key(p))) out.add(p);
             if (out.size() >= CAROUSEL_MAX) break;
         }
@@ -409,7 +416,7 @@ final class Recs {
     List<Pick> all(String kind) {
         List<Pick> out = new ArrayList<>();
         if (!hasKey(context)) return out;
-        for (Pick p : wanted()) if (p.detailed && p.pkg != null && (kind == null || kind.equals(p.kind))) out.add(p);
+        for (Pick p : wanted()) if (p.detailed && p.app != null && (kind == null || kind.equals(p.kind))) out.add(p);
         return out;
     }
 
@@ -787,8 +794,7 @@ final class Recs {
             p.poster = plexBase() + "/photo/:/transcode?width=480&height=720&minSize=1&upscale=1&url=" + URLEncoder.encode(thumb, "UTF-8");
         }
         p.link = plexPlayLink(machine, rating);
-        String still = episode ? o.optString("thumb", art) : art;     // an episode's thumb is a frame of the episode
-        p.still = plexBase() + "/photo/:/transcode?width=480&height=270&minSize=1&upscale=1&url=" + URLEncoder.encode(still, "UTF-8");
+        p.still = plexBase() + "/photo/:/transcode?width=480&height=270&minSize=1&upscale=1&url=" + URLEncoder.encode(art, "UTF-8");
         p.app = "plex";
         p.pkg = PLEX_PKG;
         p.detailed = true;
@@ -1147,8 +1153,11 @@ final class Recs {
                 File dir = new File(context.getCacheDir(), "recs");
                 //noinspection ResultOfMethodCallIgnored
                 dir.mkdirs();
+                // A still is named after its address too: which picture a title's still is can change (the show's, not
+                // the episode's), and the old file must not stand in for it.
                 File f = type.equals("g:") ? imageFile(p)
-                        : new File(dir, (type.equals("s:") ? "still-" : "poster-") + key(p).replace(":", "-") + ".jpg");
+                        : type.equals("s:") ? new File(dir, "still-" + key(p).replace(":", "-") + "-" + Integer.toHexString(url.hashCode()) + ".jpg")
+                        : new File(dir, "poster-" + key(p).replace(":", "-") + ".jpg");
                 if (!f.exists()) {
                     fetch(url, f);
                     prune(dir);
@@ -1258,22 +1267,23 @@ final class Recs {
     // MARK: - TMDB
 
     private void fetchList(int p) throws Exception {
-        // The services the TV has, by their TMDB ids in your region.
+        // The streaming services of your region we know, by their TMDB ids: the TV's and the others (their titles show
+        // too, with the Watch button off: Trailer and Watchlist still work).
         Map<Integer, String[]> services = new HashMap<>();
         JSONArray providers = get("/watch/providers/movie?language=" + lang() + "&watch_region=" + REGION).getJSONArray("results");
         for (int i = 0; i < providers.length(); i++) {
             JSONObject o = providers.getJSONObject(i);
             String[] s = service(o.optString("provider_name"));
-            if (s != null && installed(s[2])) services.put(o.getInt("provider_id"), s);
+            if (s != null) services.put(o.getInt("provider_id"), s);
         }
-        if (services.isEmpty()) throw new IOException("none of the TV's streaming services are on TMDB");
+        if (services.isEmpty()) throw new IOException("no streaming service we know is on TMDB in " + REGION);
         StringBuilder ids = new StringBuilder();
         for (int id : services.keySet()) ids.append(ids.length() == 0 ? "" : "|").append(id);
-        String common = "&language=" + lang() + "&watch_region=" + REGION + "&with_watch_monetization_types=flatrate&include_adult=false"
+        String common = "&language=" + lang() + "&watch_region=" + REGION + "&with_watch_monetization_types=flatrate%7Cfree&include_adult=false"
                 + "&sort_by=popularity.desc&with_watch_providers=" + URLEncoder.encode(ids.toString(), "UTF-8")
                 + (Config.HIDE_ANIMATION ? "&without_genres=" + ANIMATION : "");
         // 1. Trending this week (TMDB goes by what people are watching and searching for right now), only what is
-        //    on one of the TV's services: the details say where (and are then ready).
+        //    on one of those services: the details say where (and are then ready).
         List<Pick> hotMovies = new ArrayList<>(), hotShows = new ArrayList<>();
         for (String kind : new String[] {"movie", "tv"}) {
             JSONArray hot = get("/trending/" + kind + "/week?language=" + lang()).getJSONArray("results");
@@ -1285,11 +1295,11 @@ final class Recs {
                 } catch (Exception e) {
                     continue;
                 }
-                if (pick.pkg != null) (kind.equals("movie") ? hotMovies : hotShows).add(pick);
+                if (pick.app != null) (kind.equals("movie") ? hotMovies : hotShows).add(pick);
             }
         }
-        // 2. Recent releases on the TV's services: movies from the past year and shows with a new episode in the
-        //    past 3 months.
+        // 2. Recent releases on those services: movies from the past year and shows with a new episode in the past
+        //    3 months.
         JSONArray movies = get("/discover/movie?vote_count.gte=30&primary_release_date.gte=" + day(-365)
                 + "&primary_release_date.lte=" + day(0) + common).getJSONArray("results");
         JSONArray shows = get("/discover/tv?vote_count.gte=20&air_date.gte=" + day(-90) + "&air_date.lte=" + day(0)
@@ -1522,13 +1532,20 @@ final class Recs {
         }
         JSONObject wp = o.optJSONObject("watch/providers");
         JSONObject br = wp == null ? null : wp.optJSONObject("results") == null ? null : wp.optJSONObject("results").optJSONObject(REGION);
-        JSONArray flat = br == null ? null : br.optJSONArray("flatrate");
-        for (int i = 0; flat != null && i < flat.length() && p.app == null; i++) {
-            String[] s = service(flat.getJSONObject(i).optString("provider_name"));
-            if (s != null && installed(s[2])) {
-                p.app = s[1];
-                p.pkg = s[2];
+        String[] chosen = null;
+        boolean onTv = false;
+        for (String type : new String[] {"flatrate", "free"}) {
+            JSONArray list = br == null ? null : br.optJSONArray(type);
+            for (int i = 0; list != null && i < list.length() && !onTv; i++) {
+                String[] s = service(list.getJSONObject(i).optString("provider_name"));
+                if (s == null) continue;
+                onTv = installed(s[2]);
+                if (onTv || chosen == null) chosen = s;
             }
+        }
+        if (chosen != null && p.app == null) {
+            p.app = chosen[1];
+            p.pkg = onTv ? chosen[2] : null;    // null: not on this TV (the detail screen's Watch button is off)
         }
         if (p.app != null) parts.add(SERVICE_NAME.get(p.app));
         p.meta = String.join(" · ", parts);
@@ -1599,10 +1616,11 @@ final class Recs {
 
     /** The SERVICES row for a TMDB name: the installed one first, when a service has more than one package. */
     private String[] service(String name) {
-        String n = name.toLowerCase(Locale.ROOT);
+        String n = name.toLowerCase(Locale.ROOT), compact = n.replace(" ", "");
         String[] first = null;
         for (String[] s : SERVICES) {
-            if (!(s[0].equals("max") ? n.matches(".*\\bmax\\b.*") : n.contains(s[0]))) continue;
+            boolean match = s[0].length() <= 3 ? n.matches(".*\\b" + s[0] + "\\b.*") : n.contains(s[0]) || compact.contains(s[0].replace(" ", ""));
+            if (!match) continue;
             if (installed(s[2])) return s;
             if (first == null) first = s;
         }
@@ -1610,7 +1628,7 @@ final class Recs {
     }
 
     private boolean installed(String pkg) {
-        return HomeApps.launchIntent(context.getPackageManager(), pkg) != null;
+        return !pkg.isEmpty() && HomeApps.launchIntent(context.getPackageManager(), pkg) != null;
     }
 
     private long sourceStamp() {

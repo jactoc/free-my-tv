@@ -14,7 +14,8 @@ final class German {
             case "Up Next": return "Weiterschauen";
             case "New on Plex": return "Neu auf Plex";
             case "Start something new": return "Etwas Neues anfangen";
-            case "Trending on your apps": return "Angesagt in deinen Apps";
+            case "Trending now": return "Gerade angesagt";
+            case "not installed on this TV": return "auf diesem TV nicht installiert";
             case "Season ": return "Staffel ";
             case "episode": return "Folge";
             case "episodes": return "Folgen";

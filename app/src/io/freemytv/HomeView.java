@@ -1948,7 +1948,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         detailOpen = true;
         detailTextKey = "";
         detail.target = 1;
-        detailBtn = 0;
+        detailBtn = p.pkg == null ? 1 : 0;       // Watch is off on a service the TV doesn't have: Trailer first
         aimButtons(true);
         detailDirty = true;
         recs.poster(p);
@@ -1978,12 +1978,23 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
 
     private void playDetail() {
         Recs.Pick p = detailPick;
-        if (p == null || p.pkg == null) return;
+        if (p == null) return;
+        if (p.pkg == null) {        // a title on a service the TV doesn't have: Trailer and Watchlist still work
+            showToast(notOnTv(p));
+            return;
+        }
         click.open();
         HomeApps.Item it = HomeApps.app(p.pkg, Recs.serviceName(p), p.link);
         RectF r = detailButtons[0];
         boolean opened = HomeApps.open(activity, it, this, Math.round(r.left), Math.round(r.top), Math.round(r.width()), Math.round(r.height()));
         if (!opened) showToast(Ui.tr("Não deu para abrir ", "Couldn't open ") + it.label + ".");
+    }
+
+    /** "Prime Video · not installed on this TV": why Watch is off for this title. */
+    private static String notOnTv(Recs.Pick p) {
+        String service = Recs.serviceName(p);
+        String why = Ui.tr("não está instalado nesta TV", "not installed on this TV", "no está instalado en este TV");
+        return service.isEmpty() ? why : service + " · " + why;
     }
 
     /** The trailer in the YouTube app: the video TMDB knows, or a YouTube search for it. */
@@ -2089,10 +2100,11 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                 shadowDeep.setColor(Ui.alpha(0xFF000000, 0.4f * f));
                 shadows.drawCached(c, tmp, bh / 2, DEEP_BLUR * k, shadowDeep);
             }
+            boolean off = i == 0 && p.pkg == null;     // Watch, for a service the TV doesn't have: dimmed
             fill.setShader(null);
-            fill.setColor(blend(0x38FFFFFF, 0xFFFFFFFF, f));
+            fill.setColor(off ? blend(0x1AFFFFFF, 0x66FFFFFF, f) : blend(0x38FFFFFF, 0xFFFFFFFF, f));
             c.drawRoundRect(cell, cell.height() / 2, cell.height() / 2, fill);
-            int ink = blend(0xFFFFFFFF, L_INK, f);
+            int ink = off ? blend(0x73FFFFFF, 0xB31C1C1E, f) : blend(0xFFFFFFFF, L_INK, f);
             float ix = cell.left + 48 * k * grow + iconW / 2, cy = cell.centerY();
             fill.setColor(ink);
             if (i == 0) {
@@ -2126,7 +2138,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             c.drawText(labels[i], cell.left + (48 * k + iconW + 22 * k) * grow, cy + Ui.halfCap(dButton), dButton);
             bx += bw + 24 * k;
         }
-        c.drawText(Ui.tr("Voltar para fechar", "Back to close"), x, by + bh + 56 * k, dHint);
+        c.drawText(p.pkg == null ? notOnTv(p) : Ui.tr("Voltar para fechar", "Back to close"), x, by + bh + 56 * k, dHint);
     }
 
     private void drawSheet(Canvas c) {
@@ -2361,18 +2373,18 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     // MARK: - Lists (in the background, so returning to the home screen isn't delayed)
 
     /**
-     * The Apps tab (and All Apps): Launcher Settings and TV Settings, the shelf's apps in its order, then the rest, each
+     * The Apps tab (and All Apps): the shelf's apps in its order, the rest, then Launcher Settings and TV Settings; each
      * app once. The TV's Settings app and our own are those two tiles already.
      */
     private static List<HomeApps.Item> appsList(List<HomeApps.Item> shelf, List<HomeApps.Item> others) {
         List<HomeApps.Item> out = new ArrayList<>();
         Set<String> seen = new HashSet<>(Arrays.asList(HomeMode.PKG, "com.android.tv.settings"));
-        for (HomeApps.Item it : HomeApps.drawerShortcuts()) if (it.kind != HomeApps.ALL_APPS) out.add(it);
         for (HomeApps.Item it : shelf) if (it.pkg == null || seen.add(it.pkg)) out.add(it);
         for (HomeApps.Item it : others) {
             if ("freemytv-settings".equals(it.key)) continue;      // the Launcher Settings tile
             if (it.pkg == null || seen.add(it.pkg)) out.add(it);
         }
+        for (HomeApps.Item it : HomeApps.drawerShortcuts()) if (it.kind != HomeApps.ALL_APPS) out.add(it);
         return out;
     }
 
@@ -2703,7 +2715,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                 enterGenre(p);
                 return;
             }
-            if (p.pkg == null) {
+            if (!p.detailed) {
                 recs.details(p);    // a Browse title whose details haven't come yet
                 showToast(Ui.tr("Carregando…", "Loading…"));
                 return;
@@ -3655,7 +3667,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         }
         c.drawText(homeSource == HOME_UP_NEXT ? Ui.tr("Continuar assistindo", "Up Next", "Seguir viendo")
                 : homeSource == HOME_NEW ? Ui.tr("Comece algo novo", "Start something new", "Empieza algo nuevo")
-                : Ui.tr("Em alta nos seus apps", "Trending on your apps", "Tendencias en tus apps"), MARGIN * k, H_LABEL * k, lSection);
+                : Ui.tr("Em alta agora", "Trending now", "Tendencias de ahora"), MARGIN * k, H_LABEL * k, lSection);
         float iw = H_W * k, ih = H_H * k, step = iw + H_GAP * k, top = H_TOP * k;
         float scroll = homeScroll.value, sel = homeSel.value, active = cardActive.value;
         int focused = Math.round(sel);
