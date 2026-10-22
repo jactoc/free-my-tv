@@ -459,6 +459,7 @@ final class Recs {
         JSONArray list = get("/genre/movie/list?language=" + lang()).getJSONArray("genres");
         for (int i = 0; i < list.length(); i++) names.put(list.getJSONObject(i).getInt("id"), list.getJSONObject(i).getString("name"));
         List<Pick> out = new ArrayList<>();
+        Set<String> used = new HashSet<>();     // each genre gets a photo of its own
         for (int i = 0; i < GENRE_NAMES.length; i++) {
             Pick p = new Pick();
             p.id = i;
@@ -468,8 +469,9 @@ final class Recs {
             p.detailed = true;
             String backdrop = null;
             try {
-                backdrop = topBackdrop("movie", GENRE_MOVIE[i], ids);
-                if (backdrop == null && GENRE_TV[i] > 0) backdrop = topBackdrop("tv", GENRE_TV[i], ids);
+                backdrop = topBackdrop("movie", GENRE_MOVIE[i], ids, used);
+                if (backdrop == null && GENRE_TV[i] > 0) backdrop = topBackdrop("tv", GENRE_TV[i], ids, used);
+                if (backdrop != null) used.add(backdrop);
             } catch (Exception e) {
                 AppLog.w("genre " + p.title + ": " + e.getMessage());
             }
@@ -505,12 +507,13 @@ final class Recs {
                 + (ids.isEmpty() ? "" : "&with_watch_monetization_types=flatrate&with_watch_providers=" + URLEncoder.encode(ids, "UTF-8"));
     }
 
-    private String topBackdrop(String kind, int genre, String ids) throws Exception {
+    /** The photo of the most popular title of a genre that no earlier genre uses. */
+    private String topBackdrop(String kind, int genre, String ids, Set<String> used) throws Exception {
         JSONArray results = get(discoverQuery(kind, genre, ids)).getJSONArray("results");
         for (int i = 0; i < results.length(); i++) {
             JSONObject o = results.getJSONObject(i);
             String b = o.optString("backdrop_path", "");
-            if (!b.isEmpty() && !"null".equals(b) && !(Config.HIDE_ANIMATION && animated(o))) return b;
+            if (!b.isEmpty() && !"null".equals(b) && !used.contains(b) && !(Config.HIDE_ANIMATION && animated(o))) return b;
         }
         return null;
     }
@@ -736,6 +739,58 @@ final class Recs {
         } finally {
             c.disconnect();
         }
+    }
+
+    // MARK: - Tiles (the Browse grids: small images, many at once, from the same files as the posters and photos)
+
+    private final Map<String, Bitmap> tiles = new LinkedHashMap<String, Bitmap>(64, 0.75f, true) {
+        @Override protected boolean removeEldestEntry(Map.Entry<String, Bitmap> eldest) { return size() > 72; }
+    };
+    private final Set<String> tilePending = new HashSet<>(), tileFailed = new HashSet<>();
+    private final ExecutorService tileIo = Executors.newFixedThreadPool(3);
+
+    /**
+     * A small image for a Browse tile: a genre's photo or a title's poster, decoded at about the size it's drawn. Null
+     * until it has loaded (in the background; the listeners are told).
+     */
+    Bitmap tile(Pick p) {
+        if (p == null) return null;
+        final boolean genre = "genre".equals(p.kind);
+        final String url = genre ? (p.backdrop == null ? null : IMAGES + p.backdrop) : p.poster;
+        if (url == null) return null;
+        final String key = (genre ? "g:" : "p:") + key(p);
+        synchronized (tiles) {
+            Bitmap b = tiles.get(key);
+            if (b != null) return b;
+            if (tileFailed.contains(key) || !tilePending.add(key)) return null;
+        }
+        tileIo.execute(() -> {
+            boolean ok = false;
+            try {
+                File dir = new File(context.getCacheDir(), "recs");
+                File f = genre ? imageFile(p) : new File(dir, "poster-" + key(p).replace(":", "-") + ".jpg");
+                if (!f.exists()) fetch(url, f);
+                BitmapFactory.Options bounds = new BitmapFactory.Options();
+                bounds.inJustDecodeBounds = true;
+                BitmapFactory.decodeFile(f.getPath(), bounds);
+                BitmapFactory.Options opts = new BitmapFactory.Options();
+                int want = genre ? 640 : 320;
+                while (bounds.outWidth / (opts.inSampleSize + 1) >= want * 2) opts.inSampleSize++;
+                Bitmap b = BitmapFactory.decodeFile(f.getPath(), opts);
+                if (b == null) throw new IOException("unreadable image");
+                synchronized (tiles) { tiles.put(key, b); }
+                ok = true;
+            } catch (IOException | RuntimeException | OutOfMemoryError e) {
+                AppLog.w("tile: " + e.getMessage());
+            } finally {
+                synchronized (tiles) {
+                    tilePending.remove(key);
+                    if (!ok) tileFailed.add(key);
+                }
+                notifyListeners();
+            }
+        });
+        return null;
     }
 
     // MARK: - Posters (the detail screen: one at a time, from TMDB or your Plex server)
@@ -999,6 +1054,8 @@ final class Recs {
         p.kind = kind;
         p.title = o.optString(kind.equals("movie") ? "title" : "name");
         p.backdrop = backdrop;
+        String poster = o.optString("poster_path", "");
+        if (!poster.isEmpty() && !"null".equals(poster)) p.poster = POSTERS + poster;
         list.add(p);
     }
 
@@ -1320,9 +1377,9 @@ final class Recs {
             if (parts[i].lastModified() < stale) parts[i].delete();
         }
         File[] files = dir.listFiles((d, name) -> !name.endsWith(".part"));
-        if (files == null || files.length <= 60) return;
+        if (files == null || files.length <= 220) return;
         Arrays.sort(files, (a, b) -> Long.compare(a.lastModified(), b.lastModified()));
-        for (int i = 0; i < files.length - 60; i++) {
+        for (int i = 0; i < files.length - 220; i++) {
             //noinspection ResultOfMethodCallIgnored
             files[i].delete();
         }

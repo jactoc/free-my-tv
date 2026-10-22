@@ -87,7 +87,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private static final long TOAST_MS = 6000, FADE_MS = 800;
     /** Blur radii of the shadow and shadowDeep paints (Shadows needs them to draw the same blur on older TVs). */
     private static final float SHADOW_BLUR = 26, DEEP_BLUR = 30;
-    private static final int SKY = 0, HERO = 1, STATUS = 2, PLATTER = 3, TILES = 4, DRAWER = 5, SHEET = 6, TOAST = 7, DETAIL = 8;
+    private static final int SKY = 0, HERO = 1, STATUS = 2, PLATTER = 3, TILES = 4, DRAWER = 5, SHEET = 6, TOAST = 7, DETAIL = 8, BROWSE = 9;
     private static final int Z_STATUS = 0, Z_HERO = 1, Z_SHELF = 2, Z_DRAWER = 3;
     private static final ExecutorService LOADER = Executors.newSingleThreadExecutor();
     // Light design (the L_ constants): title, tab bar, three recommendation cards and the shelf.
@@ -125,7 +125,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         @Override public boolean clickable(int id) { return (id - 1) / 1000 != WIDGETS; }
     });
     private final RectF a11yRect = new RectF();
-    private final Layer sky, heroLayer, status, platter, tiles, drawerLayer, sheetLayer, detailLayer, toastLayer;
+    private final Layer sky, browseLayer, heroLayer, status, platter, tiles, drawerLayer, sheetLayer, detailLayer, toastLayer;
     private int zone = Z_SHELF;
 
     // Night look (like Apple's "Automatic" appearance): darker from sunset to sunrise, with a 2 s transition.
@@ -143,7 +143,13 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     // Browse tab: the genres first; OK on one shows its titles (browseGenre >= 0) and Back returns to the genres.
     private int browseGenre = -1, browseReturn;
     private String browseName = "";
-    private Paint gLabel;
+    private Paint gLabel, dChip;
+    // Browse is a full-screen grid (the genres 4 x 4; a title's poster grid 7 wide): its geometry, the animated selection
+    // (column and row) and the vertical scroll in rows.
+    private final Spring selCol = new Spring(0.3f, 0.86f, 0), selRow = new Spring(0.3f, 0.86f, 0), browseScroll = new Spring(0.4f, 0.9f, 0);
+    private boolean browseDirty;
+    private float bLeft, bTop, bTileW, bTileH, bGap, bClipTop, bClipBottom;
+    private int bCols = 4, bVisRows = 4;
     private LinearGradient genreScrim;
     private int widgetIndex;    // with TalkBack on, the drawer's weather (0) or quotes (1) card can take the focus
     private List<Recs.Pick> cards = new ArrayList<>();
@@ -340,6 +346,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                 case DRAWER: drawDrawer(c); break;
                 case SHEET: drawSheet(c); break;
                 case DETAIL: drawDetail(c); break;
+                case BROWSE: drawBrowse(c); break;
                 default: drawToast(c); break;
             }
             scene.setOffset(0, 0);
@@ -390,13 +397,14 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         drawerLayer = new Layer(a, DRAWER);
         sheetLayer = new Layer(a, SHEET);
         detailLayer = new Layer(a, DETAIL);
+        browseLayer = new Layer(a, BROWSE);
         toastLayer = new Layer(a, TOAST);
         // Hardware layers on the GPU: only the one that changed is redrawn; moving, fading and scaling stay cheap.
         // Not on Android 9 to 11: on older GPUs (a Mi Box 3's Mali-450) redrawing and compositing a big layer on every
         // frame cost more than drawing straight to the screen (measured: focus on the picks 33 → 12 ms a frame, the
         // drawer 19 → 17 ms).
-        for (View v : new View[] {heroLayer, status, platter, tiles, drawerLayer, sheetLayer, detailLayer}) v.setLayerType(Ui.LEGACY ? LAYER_TYPE_NONE : LAYER_TYPE_HARDWARE, null);
-        for (View v : new View[] {sky, heroLayer, status, platter, tiles, drawerLayer, sheetLayer, detailLayer, toastLayer}) {
+        for (View v : new View[] {browseLayer, heroLayer, status, platter, tiles, drawerLayer, sheetLayer, detailLayer}) v.setLayerType(Ui.LEGACY ? LAYER_TYPE_NONE : LAYER_TYPE_HARDWARE, null);
+        for (View v : new View[] {sky, browseLayer, heroLayer, status, platter, tiles, drawerLayer, sheetLayer, detailLayer, toastLayer}) {
             v.setImportantForAccessibility(IMPORTANT_FOR_ACCESSIBILITY_NO);   // TalkBack reads the items (Spoken)
             addView(v);
         }
@@ -412,6 +420,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         checkNight(false);
         sheetLayer.setVisibility(INVISIBLE);
         detailLayer.setVisibility(INVISIBLE);
+        browseLayer.setVisibility(INVISIBLE);
         scene.setMotion(0.6f, 0f);
         updatePalette();
         // First time: right away (a cold start opens with the apps already there); missing logos come from reload().
@@ -520,6 +529,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     @Override public void onRecs() {
         wake();
         detailDirty = true;     // the poster may have just arrived
+        browseDirty = true;     // so may a Browse tile
         updatePicks();
     }
 
@@ -542,6 +552,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         measure(drawerLayer, width, Math.round(600 * kk));
         measure(sheetLayer, width, height);
         measure(detailLayer, width, height);
+        measure(browseLayer, width, height);
         measure(toastLayer, Math.round(1000 * kk), Math.round(220 * kk));
         setMeasuredDimension(width, height);
     }
@@ -562,6 +573,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         sheetLayer.layout(0, 0, width, height);
         sheetLayer.setPivotX(width / 2f);
         sheetLayer.setPivotY(height / 2f);
+        browseLayer.layout(0, 0, width, height);
         detailLayer.layout(0, 0, width, height);
         detailLayer.setPivotX(width / 2f);
         detailLayer.setPivotY(height / 2f);
@@ -618,6 +630,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         lClock.setLetterSpacing(-0.01f);
         lWeather = Ui.text(Ui.medium, 34 * k, L_DIM);
         lClockQuote = Ui.numbers(Ui.medium, 28 * k, L_DIM);
+        dChip = Ui.text(Ui.semibold, 20 * k, 0xFFFFFFFF);
         gLabel = Ui.text(Ui.displaySemibold, 46 * k, 0xFFFFFFFF);
         gLabel.setShadowLayer(14 * k, 0, 2 * k, 0x99000000);
         dTitle = Ui.text(Ui.displaySemibold, 64 * k, 0xFFFFFFFF);
@@ -689,6 +702,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         boolean gridMoving = step(gridFocus, dt) | scroll.step(dt);
         boolean drawerMoving = drawer.step(dt);
         boolean sheetMoving = sheet.step(dt), detailMoving = detail.step(dt) | step(btnFocus, dt);
+        boolean browseMoving = selCol.step(dt) | selRow.step(dt) | browseScroll.step(dt);
         boolean toastFading = tickToast(up);
         boolean heroFading = tickHeroFade(up);
         boolean bgFading = tickBackgroundFade(up);
@@ -705,6 +719,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         if (drawerItemsMoving || drawerDirty || bgFading) drawerLayer.invalidate();
         if (gridMoving || gridDirty) sheetLayer.invalidate();
         if (detailOpen && (detailMoving || detailDirty)) detailLayer.invalidate();
+        if (tab == TAB_BROWSE && (browseMoving || browseDirty || cardsMoving)) browseLayer.invalidate();
+        browseDirty = false;
         detailDirty = false;
         if (drawerMoving || bgFading) sky.invalidate();
         if (bgFading || (drawerWasMoving && !drawerMoving)) platter.invalidate();
@@ -723,7 +739,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         // Busy: something is moving, or the sheet or the drawer is open.
         boolean busy = tilesMoving || statusMoving || heroMoving || drawerItemsMoving || gridMoving || drawerMoving
                 || sheetMoving || detailMoving || toastFading || heroFading || bgFading || nightMoving || sheetOpen || sheet.value > 0.001f
-                || detailOpen || detail.value > 0.001f
+                || detailOpen || detail.value > 0.001f || browseMoving
                 || drawerOpen || drawer.value > 0.001f || toast != null || !toasts.isEmpty();
         idle = !busy;
         if (busy) Choreographer.getInstance().postFrameCallback(this);
@@ -752,8 +768,9 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         float lift = -d * shift;
         show(heroLayer, top, lift);
         show(status, top, lift);
-        show(platter, home, lift);
-        show(tiles, home, lift);
+        float shelfShown = tab == TAB_BROWSE ? 0 : home;     // Browse takes the whole screen: no app shelf
+        show(platter, shelfShown, lift);
+        show(tiles, shelfShown, lift);
         float da = home * smoothstep(0.1f, 0.6f, dc);
         drawerLayer.setTranslationY((1 - d) * shift);
         drawerLayer.setAlpha(da);
@@ -763,6 +780,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         float scale = 1.04f - 0.04f * s;
         sheetLayer.setScaleX(scale);
         sheetLayer.setScaleY(scale);
+        browseLayer.setVisibility(tab == TAB_BROWSE && home > 0.001f ? VISIBLE : INVISIBLE);
+        browseLayer.setAlpha(home);
         detailLayer.setVisibility(dv > 0.001f || detailOpen ? VISIBLE : INVISIBLE);
         detailLayer.setAlpha(dv);
         float dscale = 1.04f - 0.04f * dv;
@@ -2254,6 +2273,12 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             closeDetail();
         } else if (browseGenre >= 0) {
             leaveGenre();
+        } else if (tab == TAB_BROWSE && zone == Z_CARDS) {
+            zone = Z_TOP;       // up from the genres to the tabs
+            topIndex = tab;
+            retarget(false);
+        } else if (tab == TAB_BROWSE && zone != Z_DRAWER && zone != WIDGETS && !sheetOpen) {
+            return;             // Browse has no shelf to go back to
         } else if (sheetOpen) {
             closeSheet();
         } else if (zone == Z_DRAWER || zone == WIDGETS) {
@@ -2940,6 +2965,10 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
      * shelf, the most expensive thing on screen) then waits for the focus to rest on a card for a moment.
      */
     private void focusCard(boolean settled) {
+        if (tab == TAB_BROWSE) {
+            focusBrowse();
+            return;
+        }
         for (int i = Math.max(0, cardIndex - 1); i < Math.min(cards.size(), cardIndex + 7); i++) {
             recs.backdrop(cards.get(i));
             if (tab == TAB_BROWSE && browseGenre >= 0) recs.details(cards.get(i));     // which app, description...: as you scroll
@@ -2966,8 +2995,10 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         recs.loadGenre(browseGenre);
         cardIndex = 0;
         cardPos.snap(0);
+        browseScroll.snap(0);       // a new genre starts at its first row
         cards = new ArrayList<>();
         updateCards();
+        snapBrowse();
         retarget(true);
         heroDirty = true;
     }
@@ -2978,6 +3009,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         cards = new ArrayList<>();
         updateCards();
         cardPos.snap(cardIndex);
+        snapBrowse();
         retarget(true);
         heroDirty = true;
     }
@@ -2989,8 +3021,11 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         cardIndex = 0;
         cardPos.snap(0);
         cards = new ArrayList<>();
+        motionDirty = true;     // the shelf hides in Browse and comes back in the other tabs
+        browseDirty = true;
         if (index == TAB_BROWSE) recs.ensureGenres();
         updateCards();
+        snapBrowse();
         heroDirty = true;
     }
 
@@ -3067,7 +3102,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             c.drawText(tabs()[i], r.centerX() - p.measureText(tabs()[i]) / 2, r.centerY() + Ui.halfCap(p), p);
         }
         layoutCards();
-        int n = Math.min(cards.size(), MAX_CARDS);
+        int n = tab == TAB_BROWSE ? 0 : Math.min(cards.size(), MAX_CARDS);
         int top = n == 0 ? -1 : Math.max(0, Math.min(n - 1, Math.round(cardPos.value)));
         // The cards that slide past the left margin disappear under it; the focused one is drawn last (it overlaps).
         c.save();
@@ -3075,13 +3110,13 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         for (int i = 0; i < n; i++) if (i != top && cardRects[i].right > 0 && cardRects[i].left < w) drawLightCard(c, i);
         if (top >= 0) drawLightCard(c, top);
         c.restore();
-        if (n == 0 && tab == TAB_BROWSE) {
+        if (cards.isEmpty() && tab == TAB_BROWSE) {
             String note = browseGenre >= 0 && !recs.genreLoading(browseGenre)
                     ? Ui.tr("Nada disponível nos seus apps ou no Plex", "Nothing here on your apps or Plex")
                     : Ui.tr("Carregando…", "Loading…");
             c.drawText(note, MARGIN * k, (L_CARDS_TOP + 70) * k, lCardMeta);
         }
-        if (HomeData.coinCount() > 0) drawQuotes(c);
+        if (tab != TAB_BROWSE && HomeData.coinCount() > 0) drawQuotes(c);
     }
 
     private String greeting = "";
@@ -3229,6 +3264,175 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         return out;
     }
 
+    // MARK: - Browse: full-screen grids
+
+    private int browseCols() {
+        return browseGenre < 0 ? 4 : 7;
+    }
+
+    private void layoutBrowse() {
+        bCols = browseCols();
+        bGap = 24 * k;
+        bLeft = MARGIN * k;
+        float width = CONTENT_R * k - bLeft;
+        bTileW = (width - (bCols - 1) * bGap) / bCols;
+        if (browseGenre < 0) {              // the genres: 4 x 4, all in view
+            bTop = 262 * k;
+            bTileH = (1030 * k - bTop - 3 * bGap) / 4;
+            bVisRows = 4;
+            bClipTop = 240 * k;
+            bClipBottom = h;
+        } else {                            // a genre's titles: posters, scrolling by rows; the caption sits below
+            bTop = 256 * k;
+            bTileH = bTileW * 1.5f;
+            bVisRows = Math.max(1, (int) ((976 * k - bTop + bGap) / (bTileH + bGap)));
+            bClipTop = 240 * k;
+            bClipBottom = 984 * k;
+        }
+    }
+
+    /** The selection (animated), the scroll that keeps its row in view, and the images and details around it. */
+    private void focusBrowse() {
+        layoutBrowse();
+        int row = cardIndex / bCols;
+        selCol.target = cardIndex % bCols;
+        selRow.target = row;
+        float scroll = browseGenre < 0 ? 0 : browseScroll.target;     // the genres always fit: no scroll
+        if (row < scroll) scroll = row;
+        else if (row + 1 > scroll + bVisRows) scroll = row + 1 - bVisRows;
+        browseScroll.target = Math.max(0, scroll);
+        for (int i = Math.max(0, (row - 1) * bCols); i < Math.min(cards.size(), (row + bVisRows + 1) * bCols); i++) {
+            recs.tile(cards.get(i));
+            if (browseGenre >= 0) recs.details(cards.get(i));
+        }
+        handler.removeCallbacks(backgroundFollows);
+        showBackdrop(null);     // a calm background: the grid is the picture
+        heroDirty = true;       // the heading, and the "Loading…" note that must go once the tiles are here
+        browseDirty = true;
+        wake();
+    }
+
+    private void snapBrowse() {
+        selCol.snap(selCol.target);
+        selRow.snap(selRow.target);
+        browseScroll.snap(browseScroll.target);
+    }
+
+    private boolean moveBrowseCards(int dx, int dy) {
+        int n = cards.size();
+        if (dy < 0 && (n == 0 || cardIndex < bCols)) {     // up from the first row: the tabs
+            zone = Z_TOP;
+            topIndex = tab;
+            retarget(false);
+            click.move();
+            return true;
+        }
+        if (n == 0) return true;
+        int next = cardIndex;
+        if (dx != 0) {
+            int col = cardIndex % bCols;
+            if (col + dx < 0 || col + dx >= bCols || cardIndex + dx >= n) return true;
+            next = cardIndex + dx;
+        } else {
+            next = cardIndex + dy * bCols;
+            if (next >= n) {        // the last row is short: down from above it goes to its last tile
+                if (dy > 0 && cardIndex / bCols < (n - 1) / bCols) next = n - 1;
+                else return true;
+            }
+        }
+        cardIndex = next;
+        focusBrowse();
+        click.move();
+        return true;
+    }
+
+    private void drawBrowse(Canvas c) {
+        if (labelPaint == null || tab != TAB_BROWSE) return;
+        applyTone();
+        layoutBrowse();
+        int n = cards.size();
+        if (n == 0) return;
+        float pitch = bTileH + bGap, scroll = browseScroll.value;
+        int selIdx = Math.min(n - 1, Math.max(0, Math.round(selRow.value)) * bCols + Math.max(0, Math.min(bCols - 1, Math.round(selCol.value))));
+        c.save();
+        c.clipRect(0, bClipTop, w, bClipBottom);
+        for (int i = 0; i < n; i++) {
+            float y = bTop + (i / bCols - scroll) * pitch;
+            if (i == selIdx || y > bClipBottom || y + bTileH < bClipTop) continue;
+            drawBrowseTile(c, i, y);
+        }
+        drawBrowseTile(c, selIdx, bTop + (selIdx / bCols - scroll) * pitch);   // the focused one last: it overlaps
+        c.restore();
+        if (browseGenre >= 0 && cardIndex < n) {
+            Recs.Pick p = cards.get(cardIndex);
+            c.drawText(fit(p.title, lCardTitle, 1300 * k, 0), MARGIN * k, 1018 * k, lCardTitle);
+            if (p.meta != null && !p.meta.isEmpty()) c.drawText(fit(p.meta, lCardMeta, 1300 * k, 1), MARGIN * k, 1054 * k, lCardMeta);
+        }
+    }
+
+    private void drawBrowseTile(Canvas c, int i, float y) {
+        Recs.Pick p = cards.get(i);
+        boolean genre = "genre".equals(p.kind);
+        int col = i % bCols, row = i / bCols;
+        float x = bLeft + col * (bTileW + bGap);
+        float f = Ui.clamp(hat(col - selCol.value) * hat(row - selRow.value) * cardActive.value);
+        float s = 1 + 0.07f * f, tw = bTileW * s, th = bTileH * s, lift = 6 * k * f;
+        float r = (genre ? 20 : 14) * k * s;
+        cell.set(x + bTileW / 2 - tw / 2, y + bTileH / 2 - th / 2 - lift, x + bTileW / 2 + tw / 2, y + bTileH / 2 + th / 2 - lift);
+        tmp.set(cell);
+        tmp.offset(0, (8 + 14 * f) * k);
+        shadowDeep.setColor(Ui.alpha(0xFF000000, tone(0.12f, 0.3f) + tone(0.16f, 0.24f) * f));
+        shadows.drawCached(c, tmp, r, DEEP_BLUR * k, shadowDeep);
+        Bitmap image = recs.tile(p);
+        if (image != null) {
+            roundCrop(c, image, cell, r);
+        } else {
+            fill.setShader(null);
+            fill.setColor(tone(0xFFDADADF, 0xFF2C2C2E));
+            c.drawRoundRect(cell, r, r, fill);
+            if (!genre) c.drawText(fit(p.title, lCardMeta, tw - 24 * k, 1), cell.left + 12 * k, cell.centerY(), lCardMeta);
+        }
+        if (genre) {
+            if (genreScrim == null) {
+                genreScrim = new LinearGradient(0, 0, 0, 1, new int[] {0x00000000, 0x00000000, 0xC8000000},
+                        new float[] {0, 0.4f, 1}, Shader.TileMode.CLAMP);
+            }
+            unitMatrix.setScale(1, cell.height());
+            unitMatrix.postTranslate(0, cell.top);
+            genreScrim.setLocalMatrix(unitMatrix);
+            fill.setShader(genreScrim);
+            c.drawRoundRect(cell, r, r, fill);
+            fill.setShader(null);
+            c.drawText(fit(p.title, gLabel, cell.width() - 40 * k, 2), cell.left + 22 * k, cell.bottom - 24 * k, gLabel);
+        } else if ("plex".equals(p.app)) {
+            float cw = dChip.measureText("Plex") + 22 * k, ch = 34 * k;
+            tmp.set(cell.left + 10 * k, cell.top + 10 * k, cell.left + 10 * k + cw, cell.top + 10 * k + ch);
+            fill.setColor(0xCC000000);
+            c.drawRoundRect(tmp, ch / 2, ch / 2, fill);
+            c.drawText("Plex", tmp.left + 11 * k, tmp.centerY() + Ui.halfCap(dChip), dChip);
+        }
+        if (f > 0.02f) {
+            if (lightSheen == null) {
+                lightSheen = new LinearGradient(-0.5f, -0.5f, 0, 0.5f, 0x38FFFFFF, 0x00FFFFFF, Shader.TileMode.CLAMP);
+                lightRim = new LinearGradient(0, -0.5f, 0, 0.5f, 0xE6FFFFFF, 0x59FFFFFF, Shader.TileMode.CLAMP);
+            }
+            unitMatrix.setScale(cell.width(), cell.height());
+            unitMatrix.postTranslate(cell.centerX(), cell.centerY());
+            lightSheen.setLocalMatrix(unitMatrix);
+            lightRim.setLocalMatrix(unitMatrix);
+            int alpha = Math.round(255 * f);
+            sheen.setShader(lightSheen);
+            sheen.setAlpha(alpha);
+            c.drawRoundRect(cell, r, r, sheen);
+            sheen.setAlpha(255);
+            rim.setShader(lightRim);
+            rim.setAlpha(alpha);
+            rim.setStrokeWidth(2.5f * k);
+            c.drawRoundRect(cell, r, r, rim);
+            rim.setAlpha(255);
+        }
+    }
+
     /** Draws the image as a centered crop of the cell's shape: the card changes width, the photo is never stretched. */
     private void roundCrop(Canvas c, Bitmap image, RectF cell, float r) {
         float want = cell.width() / cell.height(), iw = image.getWidth(), ih = image.getHeight();
@@ -3282,6 +3486,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     }
 
     private boolean moveLight(int dx, int dy) {
+        if (tab == TAB_BROWSE && picksOn() && zone == Z_CARDS) return moveBrowseCards(dx, dy);
         switch (zone) {
             case Z_SHELF:
                 // Up from an empty shelf too: move()'s older zones (the hero, the corner capsule) aren't drawn any more.
@@ -3315,6 +3520,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                     if (topIndex < TABS_N) selectTab(topIndex);   // like Apple TV tabs: focusing a tab selects it
                 } else if (dy > 0) {
                     if (cards.isEmpty()) {
+                        if (tab == TAB_BROWSE) return true;     // nothing to move to while the genres load
                         zone = Z_SHELF;
                     } else {
                         zone = Z_CARDS;
