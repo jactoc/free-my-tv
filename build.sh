@@ -3,6 +3,13 @@
 # Needs a JDK (17+) and the Android SDK command-line tools (build-tools 34+, platform android-34). See README.md.
 set -euo pipefail
 cd "$(dirname "$0")"
+# ./build.sh --publish also hands the new build to the TVs (update_dir and update_url in config.properties).
+PUBLISH=false
+case "${1:-}" in
+  "") ;;
+  --publish) PUBLISH=true ;;
+  *) echo "usage: ./build.sh [--publish]" >&2; exit 1 ;;
+esac
 
 # --- Tools
 SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
@@ -44,16 +51,24 @@ ANIMATION=false; [ "$(prop hide_animation false)" = "true" ] && ANIMATION=true
 
 rm -rf out && mkdir -p out/gen/io/freemytv out/classes out/genres/xml
 
-# Plain http is refused everywhere except your Plex server, whose address (plex_url) is the only one allowed.
-# Written here, not committed, so no address of yours ends up in the repository.
-PLEX_HOST="$(prop plex_url '' | sed -e 's#^[a-zA-Z]*://##' -e 's#[:/].*$##')"
+# Plain http is refused everywhere except your Plex server and your update folder (plex_url, update_url), the only
+# addresses allowed. Written here, not committed, so no address of yours ends up in the repository.
+host_of() { prop "$1" '' | sed -e 's#^[a-zA-Z]*://##' -e 's#[:/].*$##'; }
+PLEX_HOST="$(host_of plex_url)"
+UPDATE_HOST="$(host_of update_url)"
 [[ -z "$PLEX_HOST" || "$PLEX_HOST" =~ ^[A-Za-z0-9.-]+$ ]] || { echo "config.properties: plex_url must look like http://192.168.1.10:32400" >&2; exit 1; }
+[[ -z "$UPDATE_HOST" || "$UPDATE_HOST" =~ ^[A-Za-z0-9.-]+$ ]] || { echo "config.properties: update_url must look like http://192.168.1.10:8099/" >&2; exit 1; }
 {
   echo '<?xml version="1.0" encoding="utf-8"?>'
   echo '<network-security-config>'
-  [ -n "$PLEX_HOST" ] && echo "    <domain-config cleartextTrafficPermitted=\"true\"><domain includeSubdomains=\"false\">$PLEX_HOST</domain></domain-config>"
+  for host in $(printf '%s\n' "$PLEX_HOST" "$UPDATE_HOST" | sort -u); do
+    echo "    <domain-config cleartextTrafficPermitted=\"true\"><domain includeSubdomains=\"false\">$host</domain></domain-config>"
+  done
   echo '</network-security-config>'
 } > out/genres/xml/network_security_config.xml
+# Every build gets a higher version (minutes since 2024), so a TV can tell a newer one from the one it has.
+VERSION_CODE=$(( ($(date +%s) - 1704067200) / 60 ))
+VERSION_NAME="$(date +%Y.%m.%d-%H%M)"
 cat > out/gen/io/freemytv/Config.java <<EOF
 package io.freemytv;
 
@@ -65,6 +80,7 @@ final class Config {
     static final String WATCHMODE_KEY = "$(prop watchmode_key '')";
     static final String PLEX_URL = "$(prop plex_url '')";
     static final String PLEX_TOKEN = "$(prop plex_token '')";
+    static final String UPDATE_URL = "$(prop update_url '')";
     static final String TMDB_REGION = "$(prop tmdb_region US)";
     static final String LATITUDE = "$LAT";
     static final String LONGITUDE = "$LON";
@@ -84,7 +100,8 @@ EOF
 "$BT/aapt2" compile --dir out/genres -o out/res-gen.zip
 # Fonts uncompressed: Android reads them straight from the APK.
 "$BT/aapt2" link -o out/base.apk -I "$AJ" --manifest app/AndroidManifest.xml --java out/gen out/res.zip out/res-gen.zip \
-  --min-sdk-version 28 --target-sdk-version 33 -A app/assets -0 ttf
+  --min-sdk-version 28 --target-sdk-version 33 -A app/assets -0 ttf \
+  --version-code "$VERSION_CODE" --version-name "$VERSION_NAME" --replace-version
 # Windows aapt2 packs assets with backslash separators ("assets/symbols\x.png") and Android
 # cannot find them: the home screen loses its icons and fonts. Rename the zip entries to "/".
 case "$(uname -s 2>/dev/null)" in
@@ -143,3 +160,18 @@ if [ ! -f freemytv.keystore ]; then
 fi
 "$BT/apksigner$BAT" sign --ks freemytv.keystore --ks-pass pass:freemytv --key-pass pass:freemytv --out FreeMyTV.apk out/aligned.apk
 echo "Built FreeMyTV.apk ($(du -h FreeMyTV.apk | cut -f1)). Install: adb install -r FreeMyTV.apk"
+
+# --- Publish: the APK first, then version.json (each written aside and renamed), so a TV never reads a version
+# that points to a half-copied APK.
+if $PUBLISH; then
+  DIR="$(prop update_dir '')"
+  [ -n "$DIR" ] && [ -d "$DIR" ] || { echo "config.properties: update_dir must be an existing folder to publish to" >&2; exit 1; }
+  [ -n "$(prop update_url '')" ] || { echo "config.properties: set update_url too, or the TVs won't look for updates" >&2; exit 1; }
+  if command -v sha256sum >/dev/null; then SHA="$(sha256sum FreeMyTV.apk | cut -d' ' -f1)"
+  else SHA="$(shasum -a 256 FreeMyTV.apk | cut -d' ' -f1)"; fi
+  cp FreeMyTV.apk "$DIR/.FreeMyTV.apk.tmp" && chmod 644 "$DIR/.FreeMyTV.apk.tmp" && mv -f "$DIR/.FreeMyTV.apk.tmp" "$DIR/FreeMyTV.apk"
+  printf '{"versionCode": %s, "versionName": "%s", "apk": "FreeMyTV.apk", "sha256": "%s", "size": %s}\n' \
+    "$VERSION_CODE" "$VERSION_NAME" "$SHA" "$(wc -c < FreeMyTV.apk | tr -d ' ')" > "$DIR/.version.json.tmp"
+  chmod 644 "$DIR/.version.json.tmp" && mv -f "$DIR/.version.json.tmp" "$DIR/version.json"
+  echo "Published $VERSION_NAME to $DIR: the TVs pick it up within a few hours (Launcher Settings → Update looks now)."
+fi

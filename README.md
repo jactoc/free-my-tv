@@ -2,9 +2,10 @@
 
 <img src="docs/assets/icon-512.png" width="96" alt="">
 
-# Free My TV
+# Home TV
 
-**A fast, ad-free home screen for Google TV, LG and Samsung TVs.**
+**A fast, ad-free home screen for Google TV, LG and Samsung TVs.**<br>
+<sub>A personal fork of [Free My TV](https://github.com/simbasjungles/free-my-tv).</sub>
 
 Trending picks from your own apps, the weather at a glance, and a look that follows the sunset.<br>
 Open source. Built with Claude Code. One button to undo.
@@ -24,7 +25,7 @@ Open source. Built with Claude Code. One button to undo.
 - **Light by day, dark by night.** It follows your city's real sunset, the way your phone does.
 - **A screensaver to match.** Full-screen photos of the picks with a big glass clock.
 - **Fast.** Drawn by hand on one canvas, with no libraries. The original's figures (60 fps, 96 MB instead of 242 MB, measured on a 98″ TCL Google TV running Android 14) are for its three-card layout; the carousel in this fork scrolls smoothly on a Chromecast with Google TV, whose GPU is the limit.
-- **Set up on the TV.** Language, your city, temperature, theme, the weather and prices cards, which coins, and the apps on the shelf, in Free My TV's own settings.
+- **Set up on the TV.** Language, your city, temperature, theme, the weather and prices cards, which coins, and the apps on the shelf, in Home TV's own settings.
 - **Safe.** No root. Nothing is uninstalled. One button brings back the factory home screen.
 
 ## This fork
@@ -42,6 +43,9 @@ This is a personal fork of [simbasjungles/free-my-tv](https://github.com/simbasj
 - **A greeting instead of "For You":** "Good morning / afternoon / evening", with your name if you set `name=`.
 - **Weather off by default** (it can still be switched on in *Launcher Settings*; sunrise and sunset still drive the day and night look).
 - **The system's own UI sounds** for moving and opening, the same ones Settings uses, following the TV's *sound effects* setting.
+- **Called Home TV.** On Google TV the app, its settings and its screensaver are named *Home TV* (the package is still `io.freemytv`, so a new build updates the installed app in place). The LG and Samsung builds keep the original name for now.
+- **Updates over your home network.** `./build.sh --publish` puts a new build in a folder on your network, and the TVs install it by themselves (Android asks to confirm): no adb after the first install. See [Updates over your home network](#updates-over-your-home-network-optional).
+- **A 24-hour clock**, in English too (the original shows 9:47 in English).
 - **The top-right Settings button opens the TV's settings.** The launcher's own settings are *Launcher Settings* (formerly *Home Settings*) in the shortcuts drawer.
 
 ## Install
@@ -55,7 +59,7 @@ About ten minutes. You need a Google TV or Android TV (Android 9 or newer) and a
    > Install Free My TV (github.com/simbasjungles/free-my-tv) on my TV at 192.168.1.50. I live in Lisbon.
 
    It downloads the code, installs the tools it needs, builds the app and puts it on your TV, and asks before anything important. Swap in your TV's IP and your city.
-3. **On the TV**, open *Free My TV* → *Home Screen* → *Free My TV*, and accept the debugging prompt (tick *Always allow*).
+3. **On the TV**, open *Home TV* → *Home Screen* → *Home TV*, and accept the debugging prompt (tick *Always allow*).
 
 ### The manual way
 
@@ -80,7 +84,7 @@ About ten minutes. You need a Google TV or Android TV (Android 9 or newer) and a
    ```bash
    adb shell "appops set io.freemytv AUTO_START allow || appops set io.freemytv APP_AUTO_START allow"
    ```
-5. **On the TV**, open *Free My TV* → *Home Screen* → *Free My TV*.
+5. **On the TV**, open *Home TV* → *Home Screen* → *Home TV*.
 
 ## LG TVs (webOS)
 
@@ -119,7 +123,7 @@ This build takes your city from the TV's time zone. For your exact city and the 
 
 ## Settings
 
-The first values come from `config.properties`, created by the first build (Google TV, LG and Samsung use the same file). Most of them can also be changed on the TV, in *Free My TV* → *Launcher Settings*, and the TV's choice wins:
+The first values come from `config.properties`, created by the first build (Google TV, LG and Samsung use the same file). Most of them can also be changed on the TV, in *Home TV* → *Launcher Settings*, and the TV's choice wins:
 
 | Key | What it does | Default |
 |---|---|---|
@@ -136,8 +140,19 @@ The first values come from `config.properties`, created by the first build (Goog
 | `currency` | Crypto prices in `USD`, `EUR`, `BRL`… | `USD` |
 | `temperature` | `C`, `F` or `auto` | `auto` |
 | `disable_assistant` | Also turn off Google Assistant | `false` |
+| `update_url`, `update_dir` | Optional: [updates over your home network](#updates-over-your-home-network-optional). The folder's address the TVs check, and the folder `./build.sh --publish` writes to | empty |
 
 Changed something? Run `./build.sh` and install again. Keep `freemytv.keystore`: updates are signed with it.
+
+### Updates over your home network (optional)
+
+Once a TV has a build with `update_url`, new versions reach it without a computer or adb. Share a folder on your network over plain `http` (any web server will do: a small `nginx` container, a NAS), set `update_dir` to that folder and `update_url` to its address (e.g. `http://192.168.1.10:8099/`), and publish with:
+
+```bash
+./build.sh --publish
+```
+
+It builds as usual, then writes `FreeMyTV.apk` and `version.json` (the version and the APK's SHA-256) into `update_dir`. Each TV looks there every six hours, downloads a newer build and checks it against the SHA-256. Once the home screen has been left alone for a few seconds, it starts the install, and Android asks to confirm (*Launcher Settings → Update* shows where it stands, and OK there checks or installs). Android accepts only a build signed with the same `freemytv.keystore`. The first time, let the app install updates: `adb shell appops set io.freemytv REQUEST_INSTALL_PACKAGES allow` (or allow *Home TV* under *Install unknown apps* in the TV's settings). The APK carries your keys, so share that folder on your home network only, never on the internet.
 
 ### The TMDB key
 
@@ -155,9 +170,9 @@ With a free [Watchmode](https://api.watchmode.com/) key (`watchmode_key=` in `co
 
 ## Going back
 
-On the TV: *Free My TV* → *Home Screen* → *Original*. The factory home screen, screensaver and every app come back exactly as they were. If the new home screen ever crashes three times in five minutes, it switches back by itself.
+On the TV: *Home TV* → *Home Screen* → *Original*. The factory home screen, screensaver and every app come back exactly as they were. If the new home screen ever crashes three times in five minutes, it switches back by itself.
 
-To remove it for good, switch to *Original* first, then uninstall *Free My TV* (Settings → Apps). Uninstalled it while it was on? Install it again and pick *Original*: the list of what it turned off is kept in the TV's settings, so everything comes back.
+To remove it for good, switch to *Original* first, then uninstall *Home TV* (Settings → Apps). Uninstalled it while it was on? Install it again and pick *Original*: the list of what it turned off is kept in the TV's settings, so everything comes back.
 
 ## What it changes
 
@@ -170,7 +185,7 @@ To remove it for good, switch to *Original* first, then uninstall *Free My TV* (
   - on Multilaser TVs, Anoki's screen-content recognition (ACR), the store demo and the manual;
   - on KTC-made TVs (NextStar), Anoki's screen-content recognition (ACR), the store demo and the manual;
   - Google Assistant, only with `disable_assistant=true`.
-- On TCL TVs, the remote's Netflix, YouTube and Prime buttons keep working through a small accessibility service that only reads those buttons. Pick what each one opens in *Free My TV* → *Remote Buttons*; *Original* turns the service off. On Vestel-made TVs (F&U and other store brands) and Xiaomi (Formovie) projectors the same goes for the Netflix button, and on KTC-made TVs (NextStar) for the Tabii button. On Sony TVs, the BRAVIA CORE, Netflix, Disney+, Prime Video, YouTube and Crunchyroll buttons can each open the app you pick, or keep Sony's default.
+- On TCL TVs, the remote's Netflix, YouTube and Prime buttons keep working through a small accessibility service that only reads those buttons. Pick what each one opens in *Home TV* → *Remote Buttons*; *Original* turns the service off. On Vestel-made TVs (F&U and other store brands) and Xiaomi (Formovie) projectors the same goes for the Netflix button, and on KTC-made TVs (NextStar) for the Tabii button. On Sony TVs, the BRAVIA CORE, Netflix, Disney+, Prime Video, YouTube and Crunchyroll buttons can each open the app you pick, or keep Sony's default.
 - Picture, sound, inputs, remote pairing, Google services and the Play Store are on a protected list, checked before every change.
 - Apps that saved a Wi-Fi network are never turned off, since Android would erase the network. If the TV's first setup saved yours, the switch asks you to forget the network and connect again in Settings first (saved networks out of range don't show there; Claude Code can remove them).
 
@@ -229,7 +244,7 @@ The website ([freemytv.io](https://freemytv.io)) is in [`docs/`](docs): plain HT
 
 ## Privacy
 
-No accounts, no analytics, no tracking. The app talks to TMDB, Open-Meteo (with the coordinates you set, or your time zone's main city), and Binance only when `show_crypto=true`, and Watchmode only when you set a `watchmode_key`. With `plex_url` and `plex_token` set it also talks to your own Plex server, and to plex.tv for the watchlist and for finding titles in Plex's catalog. A trailer is played by YouTube's embedded player in a WebView that can load only YouTube (without your YouTube account, so it may show ads); the title's trailer is looked up on TMDB. Your settings stay on your computer and your TV.
+No accounts, no analytics, no tracking. The app talks to TMDB, Open-Meteo (with the coordinates you set, or your time zone's main city), and Binance only when `show_crypto=true`, and Watchmode only when you set a `watchmode_key`. With `plex_url` and `plex_token` set it also talks to your own Plex server, and to plex.tv for the watchlist and for finding titles in Plex's catalog. With `update_url` set, it checks that folder on your network for new versions. A trailer is played by YouTube's embedded player in a WebView that can load only YouTube (without your YouTube account, so it may show ads); the title's trailer is looked up on TMDB. Your settings stay on your computer and your TV.
 
 ## Credits
 

@@ -162,16 +162,14 @@ final class Ui {
         return "de".equals(tv.getLanguage()) ? tv : Locale.GERMANY;
     }
 
-    /** "21:47" (in English, "9:47", like the iPhone in the US). */
+    /** "21:47": 24-hour in every language, English too (this fork's choice; the original used "9:47" in English). */
     static String clock(long now) {
-        return en ? new SimpleDateFormat("h:mm", Locale.US).format(new Date(now))
-                : new SimpleDateFormat("HH:mm", locale()).format(new Date(now));
+        return new SimpleDateFormat("HH:mm", en ? Locale.UK : locale()).format(new Date(now));
     }
 
-    /** "5:21" (sunrise and sunset; in English, "5:21 AM"). */
+    /** "5:21" (sunrise and sunset), 24-hour like the clock. */
     static String time(long at) {
-        return once("time", at, () -> en ? new SimpleDateFormat("h:mm a", Locale.US).format(new Date(at))
-                : new SimpleDateFormat("H:mm", locale()).format(new Date(at)));
+        return once("time", at, () -> new SimpleDateFormat("H:mm", en ? Locale.UK : locale()).format(new Date(at)));
     }
 
     private static final HashMap<String, String> FORMATTED = new HashMap<>();

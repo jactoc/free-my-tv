@@ -147,6 +147,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     // At the top: tabs (0 to TABS_N - 1) and icon-only buttons after them; below, the carousel of cards
     private int tab = TAB_EXPLORE, topIndex = TAB_EXPLORE, cardIndex;
     private boolean keyTouched;     // set by the first key: the home screen then stops choosing the tab by itself
+    private long lastKeyAt;         // uptime of the last key: an update installs only when nobody is using the screen
     // Browse tab: the genres first; OK on one shows its titles (browseGenre >= 0) and Back returns to the genres.
     private int browseGenre = -1, browseReturn;
     private String browseKind, exploreKind;     // All titles (null), only movies ("movie") or only shows ("tv"): one choice per tab
@@ -396,6 +397,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             recs.refreshIfStale();
             recs.refreshContinue();
             checkNotices();
+            maybeUpdate();
             updatePalette();
             checkNight(true);
             updatePicks();      // three new ones every hour
@@ -437,7 +439,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             v.setImportantForAccessibility(IMPORTANT_FOR_ACCESSIBILITY_NO);   // TalkBack reads the items (Spoken)
             addView(v);
         }
-        setContentDescription("Free My TV");
+        setContentDescription("Home TV");
         drawerLayer.setVisibility(INVISIBLE);
         for (int i = 0; i < TABS_N + 3; i++) {
             topFocus[i] = new Spring(0.26f, 0.85f, 0);
@@ -476,6 +478,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         if (tvInputs != null) tvInputs.registerCallback(inputCallback, handler);
         handler.postDelayed(tick, 15_000);
         checkNotices();
+        lastKeyAt = SystemClock.uptimeMillis();
+        maybeUpdate();
         reload();
         updatePalette();
         updatePicks();
@@ -2231,6 +2235,22 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     }
 
     /** New notices from the main process (mode switches, the check after the TV boots): those from the last 24 h. */
+    /**
+     * Updates over the home network: looks for a newer build now and then, and installs a downloaded one once the home
+     * screen has been left alone for a moment (Android asks to confirm). Each version is offered this way once; after
+     * that it waits in Launcher Settings (Update).
+     */
+    private void maybeUpdate() {
+        if (!Updates.enabled()) return;
+        Updates.checkIfStale(getContext(), null);
+        long code = Updates.readyCode();
+        if (Updates.state() != Updates.READY || code == 0 || ui.getLong("updateOffered", 0) == code) return;
+        if (SystemClock.uptimeMillis() - lastKeyAt < 10_000 || reordering || sheetOpen) return;
+        ui.edit().putLong("updateOffered", code).apply();
+        showToast(Ui.tr("Atualizando o Home TV…", "Updating Home TV…"));
+        Updates.install(activity);
+    }
+
     private void checkNotices() {
         final Context c = getContext().getApplicationContext();
         LOADER.execute(() -> {
@@ -2275,6 +2295,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     boolean onKey(KeyEvent e) {
         wake();
         keyTouched = true;
+        lastKeyAt = SystemClock.uptimeMillis();
         boolean down = e.getAction() == KeyEvent.ACTION_DOWN;
         if (reordering) return reorderKey(e, down);
         int code = e.getKeyCode();

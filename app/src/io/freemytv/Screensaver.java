@@ -3,7 +3,7 @@ package io.freemytv;
 import android.service.dreams.DreamService;
 
 /**
- * The Free My TV screensaver (enabled in Free My TV mode via `settings put secure screensaver_components`). The system
+ * The Home TV screensaver (enabled in Home TV mode via `settings put secure screensaver_components`). The system
  * still decides when it starts and when the TV turns off (e.g. after 10 min idle, then 2 h later), as before: the app
  * doesn't change those timings. Any key exits.
  */

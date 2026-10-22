@@ -1,8 +1,12 @@
 package io.freemytv;
 
 import android.content.Context;
+import android.content.Intent;
+import android.content.pm.PackageManager;
+import android.content.pm.ResolveInfo;
 import android.os.Build;
 import android.os.SystemClock;
+import android.provider.Settings;
 
 import org.json.JSONArray;
 import org.json.JSONException;
@@ -23,7 +27,7 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * Original ⇄ Free My TV. "free": our home screen and screensaver, and the apps in the lists below turned off
+ * Original ⇄ Home TV. "free": our home screen and screensaver, and the apps in the lists below turned off
  * (pm disable-user: still installed, back with one button). "original": everything as it came from the factory.
  *
  * It all goes through the TV's own ADB (Adb, 127.0.0.1:5555), which you allow once on the TV. The switches run as
@@ -52,7 +56,7 @@ final class HomeMode {
     static final String GOOGLE_SETUP = "com.google.android.tungsten.setupwraith";
 
     /**
-     * Turned off in Free My TV mode, when the TV has them. Google extras first, then TV-maker extras (TCL here; add
+     * Turned off in Home TV mode, when the TV has them. Google extras first, then TV-maker extras (TCL here; add
      * your brand's, see the README). The TV's own home screen and screensaver are added at switch time.
      */
     static final String[] DEBLOAT = {
@@ -153,20 +157,53 @@ final class HomeMode {
         ModeJob.schedule(c, ModeJob.REVERT, null, 0);
     }
 
-    /** After the TV boots (and after a TV update): wait for the system to settle and check Free My TV mode. */
+    /** After the TV boots (and after a TV update): wait for the system to settle and check Home TV mode. */
     static void bootCheck(Context c) {
         ensureRemoteService(c, 30_000);
         ModeJob.schedule(c, ModeJob.VERIFY, null, 45_000);
     }
 
-    /** After an update of this app: complete Free My TV mode if anything is missing. */
+    /** After an update of this app: complete Home TV mode if anything is missing. */
     static void verify(Context c) {
         ModeJob.schedule(c, ModeJob.VERIFY, null, 0);
     }
 
     /**
+     * Without ADB: Home TV mode looks whole (our home screen is the default, our screensaver is set, the apps we turned
+     * off are still off). An update of this app changes none of that, and the full check needs the TV's own ADB, often
+     * off, which would leave a "couldn't check" notice after every update. Unsure (a setting we can't read) counts as
+     * not whole: then the full check runs.
+     */
+    static boolean looksIntact(Context c) {
+        JSONObject s = state(c);
+        if (!FREE.equals(s.optString("mode")) || s.optBoolean("homeReverted")) return false;
+        try {
+            PackageManager pm = c.getPackageManager();
+            ResolveInfo home = pm.resolveActivity(new Intent(Intent.ACTION_MAIN)
+                    .addCategory(Intent.CATEGORY_HOME), PackageManager.MATCH_DEFAULT_ONLY);
+            if (home == null || home.activityInfo == null || !PKG.equals(home.activityInfo.packageName)) return false;
+            String dreams = Settings.Secure.getString(c.getContentResolver(), "screensaver_components");
+            if (dreams == null || !Arrays.asList(dreams.split(",")).contains(DREAM)) return false;
+            for (String pkg : stringList(s, "disabled")) {
+                int on;
+                try {
+                    on = pm.getApplicationEnabledSetting(pkg);
+                } catch (IllegalArgumentException e) {
+                    continue;       // hidden from this app (package visibility): our update can't have turned it on
+                }
+                if (on != PackageManager.COMPONENT_ENABLED_STATE_DISABLED_USER
+                        && on != PackageManager.COMPONENT_ENABLED_STATE_DISABLED) return false;
+            }
+            return true;
+        } catch (RuntimeException e) {      // a setting Android won't let us read
+            AppLog.w("quick check: " + e.getMessage());
+            return false;
+        }
+    }
+
+    /**
      * The remote's app buttons (RemoteKeys) need an accessibility service that only filters those keys. It is on only
-     * on TCL, Vestel, KTC and Sony TVs (and Formovie projectors) in Free My TV mode, and goes off with Original. Android turns it off when this app is updated, so the
+     * on TCL, Vestel, KTC and Sony TVs (and Formovie projectors) in Home TV mode, and goes off with Original. Android turns it off when this app is updated, so the
      * boot check and an update turn it back on.
      */
     static void ensureRemoteService(Context c, long delayMs) {
@@ -272,7 +309,7 @@ final class HomeMode {
             Set<String> disabled = new HashSet<>(stringList(state(c), "disabled"));
             Set<String> present = packages(adb, "");
             Set<String> keptOff = new HashSet<>(stringList(state(c), "keptOff"));
-            // Off now and not on our list: the person turned it off, unless an earlier install of Free My TV did (its
+            // Off now and not on our list: the person turned it off, unless an earlier install of Home TV did (its
             // list lives in the TV's settings too, since an uninstall erases our state file).
             Set<String> ours = recorded(adb);
             for (String pkg : packages(adb, "-d")) {
@@ -309,15 +346,15 @@ final class HomeMode {
                     AppLog.w("remote buttons service: " + e.getMessage());
                 }
             }
-            notice(c, Ui.tr("Free My TV ligado: Início e tela de descanso novos, " + disabled.size() + " apps desligados.",
-                    "Free My TV is on: new home screen and screensaver, " + disabled.size() + " apps turned off."));
-            busy(c, Ui.tr("Medindo o Free My TV…", "Measuring Free My TV…"));
+            notice(c, Ui.tr("Home TV ligado: Início e tela de descanso novos, " + disabled.size() + " apps desligados.",
+                    "Home TV is on: new home screen and screensaver, " + disabled.size() + " apps turned off."));
+            busy(c, Ui.tr("Medindo o Home TV…", "Measuring Home TV…"));
             measureHomeTime(c, adb, FREE);
             done(c, null);
             adb.shell("am start -a android.intent.action.MAIN -c android.intent.category.HOME");
             ModeJob.schedule(c, ModeJob.MEMORY, FREE, 120_000);
         } catch (Exception e) {
-            done(c, Ui.tr("Não deu para ligar o Free My TV: ", "Couldn't turn on Free My TV: ") + (Ui.ru ? Russian.text(e.getMessage() == null ? "" : e.getMessage()) : e.getMessage()));
+            done(c, Ui.tr("Não deu para ligar o Home TV: ", "Couldn't turn on Home TV: ") + (Ui.ru ? Russian.text(e.getMessage() == null ? "" : e.getMessage()) : e.getMessage()));
         }
     }
 
@@ -414,8 +451,8 @@ final class HomeMode {
                 restoreScreensaver(adb, s);
                 s.put("homeReverted", true).put("disabled", kept);
                 save(app, s);
-                notice(app, Ui.tr("O Início do Free My TV caiu 3 vezes seguidas; voltei para o Início original.",
-                        "Free My TV's home screen crashed 3 times in a row; I switched back to the original one."));
+                notice(app, Ui.tr("O Início do Home TV caiu 3 vezes seguidas; voltei para o Início original.",
+                        "Home TV's home screen crashed 3 times in a row; I switched back to the original one."));
                 adb.shell("am start -a android.intent.action.MAIN -c android.intent.category.HOME");
             } catch (Exception e) {
                 AppLog.w("could not give the home screen back: " + e.getMessage());
@@ -424,7 +461,7 @@ final class HomeMode {
     }
 
     /**
-     * In Free My TV mode, checks that everything is still as we left it (the listed apps off, our home screen and
+     * In Home TV mode, checks that everything is still as we left it (the listed apps off, our home screen and
      * screensaver) and completes whatever is missing, with a notice. Runs after the TV boots (TV updates can turn
      * things back on) and after an update of this app.
      */
@@ -454,7 +491,7 @@ final class HomeMode {
                     }
                 }
                 Set<String> disabled = new HashSet<>(stringList(s, "disabled"));
-                // Off before Free My TV: turned off again if a TV update brings one back, but never handed to
+                // Off before Home TV: turned off again if a TV update brings one back, but never handed to
                 // Original to turn on.
                 List<String> keptOff = stringList(s, "keptOff");
                 for (String pkg : sorted(wanted)) {
@@ -482,14 +519,14 @@ final class HomeMode {
                 latest.put("disabled", new JSONArray(sorted(disabled)));
                 save(app, latest);
             } catch (Exception e) {
-                notice(app, Ui.tr("Não consegui conferir o Free My TV: ", "Couldn't check Free My TV: ") + (Ui.ru ? Russian.text(e.getMessage() == null ? "" : e.getMessage()) : e.getMessage()));
+                notice(app, Ui.tr("Não consegui conferir o Home TV: ", "Couldn't check Home TV: ") + (Ui.ru ? Russian.text(e.getMessage() == null ? "" : e.getMessage()) : e.getMessage()));
                 return;
             }
             if (!fixed.isEmpty()) {
                 notice(app, (updated ? Ui.tr("A atualização da TV religou ", "The TV update turned back on ")
                         : Ui.tr("Desliguei o que faltava: ", "Turned off what was missing: ")) + String.join(", ", fixed) + ".");
             } else if (updated) {
-                notice(app, Ui.tr("A TV foi atualizada; o Free My TV continua igual.", "The TV was updated; Free My TV is still on."));
+                notice(app, Ui.tr("A TV foi atualizada; o Home TV continua igual.", "The TV was updated; Home TV is still on."));
             }
         }
     }
@@ -774,7 +811,7 @@ final class HomeMode {
     }
 
     /**
-     * What Free My TV turned off, kept in the TV's own settings too: an uninstall or Clear data erases our state file,
+     * What Home TV turned off, kept in the TV's own settings too: an uninstall or Clear data erases our state file,
      * and a new install must still tell its own work from what the person had turned off (#142).
      */
     private static final String RECORD = "free_my_tv_disabled";
