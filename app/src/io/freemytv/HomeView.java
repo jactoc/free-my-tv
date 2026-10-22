@@ -3,6 +3,7 @@ package io.freemytv;
 import android.accessibilityservice.AccessibilityServiceInfo;
 import android.app.Activity;
 import android.content.Context;
+import android.content.Intent;
 import android.content.SharedPreferences;
 import android.graphics.Bitmap;
 import android.graphics.BitmapShader;
@@ -1871,10 +1872,16 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private void trailerDetail() {
         Recs.Pick p = detailPick;
         if (p == null) return;
-        String url = p.trailer != null ? "https://www.youtube.com/watch?v=" + p.trailer
-                : "https://www.youtube.com/results?search_query=" + android.net.Uri.encode(p.title + " " + p.year + " trailer");
+        if (p.trailer != null) {
+            // Played in our own screen with YouTube's embedded player: Back returns here (the YouTube app's Back goes to its home).
+            activity.startActivity(new Intent(activity, TrailerActivity.class)
+                    .putExtra(TrailerActivity.EXTRA_KEY, p.trailer).putExtra(TrailerActivity.EXTRA_TITLE, p.title));
+            return;
+        }
+        // No trailer known: a YouTube search in the YouTube app.
+        String url = "https://www.youtube.com/results?search_query=" + android.net.Uri.encode(p.title + " " + p.year + " trailer");
         HomeApps.Item it = HomeApps.app("com.google.android.youtube.tv", "YouTube", url);
-        it.freshTask = true;    // Back from the trailer comes back here, not to YouTube's home
+        it.freshTask = true;    // Back comes back here, not to YouTube's home
         RectF r = detailButtons[1];
         boolean opened = HomeApps.open(activity, it, this, Math.round(r.left), Math.round(r.top), Math.round(r.width()), Math.round(r.height()));
         if (!opened) showToast(Ui.tr("Não deu para abrir o YouTube.", "Couldn't open YouTube."));

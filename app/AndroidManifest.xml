@@ -99,6 +99,16 @@
             </intent-filter>
         </activity>
 
+        <!-- A trailer in YouTube's embedded player, inside this app: Back returns to the title's page. -->
+        <activity
+            android:name=".TrailerActivity"
+            android:process=":home"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:screenOrientation="landscape"
+            android:configChanges="keyboard|keyboardHidden|navigation|orientation|screenSize|screenLayout|smallestScreenSize|uiMode|density|fontScale|locale|layoutDirection"
+            android:theme="@android:style/Theme.Material.NoActionBar.Fullscreen" />
+
         <service
             android:name=".Screensaver"
             android:process=":home"
