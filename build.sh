@@ -39,7 +39,7 @@ number() {
 LAT="$(number latitude 40.7128)"
 LON="$(number longitude -74.0060)"
 ASSIST=false; [ "$(prop disable_assistant false)" = "true" ] && ASSIST=true
-CRYPTO=false; [ "$(prop show_crypto true)" = "true" ] && CRYPTO=true
+CRYPTO=false; [ "$(prop show_crypto false)" = "true" ] && CRYPTO=true
 ANIMATION=false; [ "$(prop hide_animation false)" = "true" ] && ANIMATION=true
 
 rm -rf out && mkdir -p out/gen/io/freemytv out/classes out/genres/xml

@@ -71,7 +71,7 @@ final class Recs {
     private static final int ANIMATION = 16;
     private static final long LIST_EVERY = 6 * 3600_000L;
     /** Bump when what is saved for each title changes (the saved list is discarded and fetched again). */
-    private static final int CACHE_VERSION = 6;
+    private static final int CACHE_VERSION = 7;
     private static final String PLEX_PKG = "com.plexapp.android";
     private static final int PLEX_MAX = 24;
     /** The carousel's length: every pick gets its details and image fetched in the background. */
@@ -1023,6 +1023,11 @@ final class Recs {
         return out;
     }
 
+    /** The link that makes the Plex TV app play an item of your server. */
+    static String plexPlayLink(String machine, String ratingKey) throws Exception {
+        return "plex://watch/video?uri=" + URLEncoder.encode("server://" + machine + "/com.plexapp.plugins.library/library/metadata/" + ratingKey, "UTF-8");
+    }
+
     private static Pick plexPick(JSONObject o, String kind, String machine) throws Exception {
         String art = o.optString("art", ""), rating = o.optString("ratingKey", "");
         if (art.isEmpty() || rating.isEmpty()) return null;
@@ -1037,8 +1042,9 @@ final class Recs {
         p.backdrop = "plex" + rating + "-" + Integer.toHexString(art.hashCode()) + ".jpg";
         p.image = plexBase() + "/photo/:/transcode?width=" + Backdrop.W + "&height=" + Backdrop.H + "&minSize=1&upscale=1&url="
                 + URLEncoder.encode(art, "UTF-8");
-        p.link = "plex://preplay/?metadataKey=" + URLEncoder.encode("/library/metadata/" + rating, "UTF-8")
-                + "&metadataType=" + (kind.equals("movie") ? 1 : 2) + "&server=" + URLEncoder.encode(machine, "UTF-8");
+        // The Plex TV app plays the item (a show: its next episode) for this link: found in the app itself, the older
+        // "plex://preplay/..." and "server://..." forms are ignored by it.
+        p.link = plexPlayLink(machine, rating);
         p.app = "plex";
         p.pkg = PLEX_PKG;
         p.summary = o.optString("summary");
