@@ -77,12 +77,12 @@ final class Recs {
     private static final int ANIMATION = 16;
     private static final long LIST_EVERY = 6 * 3600_000L;
     /** Bump when what is saved for each title changes (the saved list is discarded and fetched again). */
-    private static final int CACHE_VERSION = 8;
+    private static final int CACHE_VERSION = 9;
     private static final String PLEX_PKG = "com.plexapp.android";
     private static final int PLEX_MAX = 24;
     /** The carousel's length: every pick gets its details and image fetched in the background. */
     private static final int CAROUSEL_MAX = 40;
-    private static final String POSTERS = "https://image.tmdb.org/t/p/w500";
+    private static final String POSTERS = "https://image.tmdb.org/t/p/w780";
     private static final int MANHA = 0, TARDE = 1, NOITE = 2;
     static final String[] PERIOD_LABEL = {"PARA ESTA MANHÃ", "PARA ESTA TARDE", "PARA ESTA NOITE"};
     static final String[] PERIOD_LABEL_RU = {"ЭТИМ УТРОМ", "СЕГОДНЯ ДНЁМ", "СЕГОДНЯ ВЕЧЕРОМ"};
@@ -868,15 +868,14 @@ final class Recs {
         p.kind = episode ? "tv" : "movie";
         p.title = episode ? o.optString("grandparentTitle") : o.optString("title");
         p.plexKey = rating;
-        p.backdrop = "plex" + rating + "-" + Integer.toHexString(art.hashCode()) + ".jpg";
-        p.image = plexBase() + "/photo/:/transcode?width=" + Backdrop.W + "&height=" + Backdrop.H + "&minSize=1&upscale=1&url="
-                + URLEncoder.encode(art, "UTF-8");
+        p.backdrop = "plex" + rating + "-" + Integer.toHexString(art.hashCode()) + "-q90.jpg";
+        p.image = plexPhoto(art, Backdrop.W, Backdrop.H);
         String thumb = episode ? o.optString("grandparentThumb") : o.optString("thumb");
         if (!thumb.isEmpty()) {
-            p.poster = plexBase() + "/photo/:/transcode?width=480&height=720&minSize=1&upscale=1&url=" + URLEncoder.encode(thumb, "UTF-8");
+            p.poster = plexPhoto(thumb, Backdrop.ui(480), Backdrop.ui(720));
         }
         p.link = plexPlayLink(machine, rating);
-        p.still = plexBase() + "/photo/:/transcode?width=480&height=270&minSize=1&upscale=1&url=" + URLEncoder.encode(art, "UTF-8");
+        p.still = plexPhoto(art, Backdrop.ui(756), Backdrop.ui(425));
         p.app = "plex";
         p.pkg = PLEX_PKG;
         p.detailed = true;
@@ -1043,13 +1042,12 @@ final class Recs {
         p.title = s.optString("parentTitle");
         p.plexKey = key;
         p.showKey = s.optString("parentRatingKey");
-        p.backdrop = "plex" + key + "-" + Integer.toHexString(art.hashCode()) + ".jpg";
-        p.image = plexBase() + "/photo/:/transcode?width=" + Backdrop.W + "&height=" + Backdrop.H + "&minSize=1&upscale=1&url="
-                + URLEncoder.encode(art, "UTF-8");
-        p.still = plexBase() + "/photo/:/transcode?width=480&height=270&minSize=1&upscale=1&url=" + URLEncoder.encode(art, "UTF-8");
+        p.backdrop = "plex" + key + "-" + Integer.toHexString(art.hashCode()) + "-q90.jpg";
+        p.image = plexPhoto(art, Backdrop.W, Backdrop.H);
+        p.still = plexPhoto(art, Backdrop.ui(756), Backdrop.ui(425));
         String thumb = s.optString("thumb", s.optString("parentThumb"));
         if (!thumb.isEmpty()) {
-            p.poster = plexBase() + "/photo/:/transcode?width=480&height=720&minSize=1&upscale=1&url=" + URLEncoder.encode(thumb, "UTF-8");
+            p.poster = plexPhoto(thumb, Backdrop.ui(480), Backdrop.ui(720));
         }
         p.app = "plex";
         p.pkg = PLEX_PKG;
@@ -1217,7 +1215,7 @@ final class Recs {
     Bitmap still(Pick p) {
         if (p == null) return null;
         String url = p.still != null ? p.still
-                : p.backdrop != null && !p.backdrop.startsWith("plex") ? "https://image.tmdb.org/t/p/w780" + p.backdrop : null;
+                : p.backdrop != null && !p.backdrop.startsWith("plex") ? "https://image.tmdb.org/t/p/w1280" + p.backdrop : null;
         return small(p, "s:", url, 756, 425);     // Home's card, focused (1.05×)
     }
 
@@ -1239,7 +1237,7 @@ final class Recs {
                 // the episode's), and the old file must not stand in for it.
                 File f = type.equals("g:") ? imageFile(p)
                         : type.equals("s:") ? new File(dir, "still-" + key(p).replace(":", "-") + "-" + Integer.toHexString(url.hashCode()) + ".jpg")
-                        : new File(dir, "poster-" + key(p).replace(":", "-") + ".jpg");
+                        : new File(dir, "poster-" + key(p).replace(":", "-") + "-hq.jpg");
                 if (!f.exists()) {
                     fetch(url, f);
                     prune(dir);
@@ -1313,7 +1311,7 @@ final class Recs {
                 File dir = new File(context.getCacheDir(), "recs");
                 //noinspection ResultOfMethodCallIgnored
                 dir.mkdirs();
-                File f = new File(dir, "poster-" + key.replace(":", "-") + ".jpg");
+                File f = new File(dir, "poster-" + key.replace(":", "-") + "-hq.jpg");
                 if (!f.exists()) {
                     fetch(p.poster, f);
                     prune(dir);
@@ -1429,6 +1427,15 @@ final class Recs {
         return !Config.PLEX_URL.trim().isEmpty() && !Config.PLEX_TOKEN.trim().isEmpty();
     }
 
+    /**
+     * A Plex image covering w×h (the size it's drawn at, so the TV doesn't resample it), as a JPEG of quality 90: Plex's
+     * default is blocky on a big screen, and on the LAN the extra weight (about double) costs nothing.
+     */
+    private static String plexPhoto(String path, int w, int h) throws java.io.UnsupportedEncodingException {
+        return plexBase() + "/photo/:/transcode?width=" + w + "&height=" + h + "&minSize=1&upscale=1&quality=90&url="
+                + URLEncoder.encode(path, "UTF-8");
+    }
+
     private static String plexBase() {
         String base = Config.PLEX_URL.trim();
         return base.endsWith("/") ? base.substring(0, base.length() - 1) : base;
@@ -1488,10 +1495,9 @@ final class Recs {
         p.kind = kind;
         p.title = o.optString("title");
         p.plexKey = rating;
-        p.backdrop = "plex" + rating + "-" + Integer.toHexString(art.hashCode()) + ".jpg";
-        p.image = plexBase() + "/photo/:/transcode?width=" + Backdrop.W + "&height=" + Backdrop.H + "&minSize=1&upscale=1&url="
-                + URLEncoder.encode(art, "UTF-8");
-        p.still = plexBase() + "/photo/:/transcode?width=480&height=270&minSize=1&upscale=1&url=" + URLEncoder.encode(art, "UTF-8");
+        p.backdrop = "plex" + rating + "-" + Integer.toHexString(art.hashCode()) + "-q90.jpg";
+        p.image = plexPhoto(art, Backdrop.W, Backdrop.H);
+        p.still = plexPhoto(art, Backdrop.ui(756), Backdrop.ui(425));
         // The Plex TV app plays the item (a show: its next episode) for this link: found in the app itself, the older
         // "plex://preplay/..." and "server://..." forms are ignored by it.
         p.link = plexPlayLink(machine, rating);
@@ -1507,7 +1513,7 @@ final class Recs {
         }
         String thumb = o.optString("thumb", "");
         if (!thumb.isEmpty()) {
-            p.poster = plexBase() + "/photo/:/transcode?width=480&height=720&minSize=1&upscale=1&url=" + URLEncoder.encode(thumb, "UTF-8");
+            p.poster = plexPhoto(thumb, Backdrop.ui(480), Backdrop.ui(720));
         }
         p.year = o.optString("year");
         p.rating = (float) o.optDouble("audienceRating", o.optDouble("rating", 0));
