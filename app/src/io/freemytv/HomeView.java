@@ -4397,16 +4397,17 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         spacesDirty = true;
     }
 
-    /** The room's sections (Scenes, Lights, Shutters) and every tile's place, top to bottom. */
+    /** The room's sections (Scenes, Lights, Shutters, Climate) and every tile's place, top to bottom. */
     private void layoutSpaces() {
         spaceItems.clear();
         spaceSections.clear();
         HomeAssistant.Room r = room();
         if (r == null) return;
         float y = S_TOP;
-        String[] heads = {Ui.tr("Cenas", "Scenes", "Escenas"), Ui.tr("Luzes", "Lights", "Luces"), Ui.tr("Persianas", "Shutters", "Persianas")};
-        List<List<HomeAssistant.Thing>> groups = java.util.Arrays.asList(r.shortcuts, r.lights, r.covers);
-        for (int g = 0; g < 3; g++) {
+        String[] heads = {Ui.tr("Cenas", "Scenes", "Escenas"), Ui.tr("Luzes", "Lights", "Luces"), Ui.tr("Persianas", "Shutters", "Persianas"),
+                Ui.tr("Clima", "Climate", "Clima")};
+        List<List<HomeAssistant.Thing>> groups = java.util.Arrays.asList(r.shortcuts, r.lights, r.covers, r.climates);
+        for (int g = 0; g < groups.size(); g++) {
             List<HomeAssistant.Thing> group = groups.get(g);
             if (group.isEmpty()) continue;
             int first = spaceItems.size();
@@ -4429,7 +4430,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         if (controlThing != null) {     // the slider: up and down change it
             int d = dy != 0 ? -dy : dx;
             if (d == 0) return true;
-            int next = stepValue(controlValue, d, controlThing.kind == HomeAssistant.COVER);
+            int next = controlThing.kind == HomeAssistant.CLIMATE ? stepTenths(controlThing, controlValue, d)
+                    : stepValue(controlValue, d, controlThing.kind == HomeAssistant.COVER);
             if (next != controlValue) {
                 controlValue = next;
                 handler.removeCallbacks(controlSend);
@@ -4502,6 +4504,17 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         return BRIGHTNESS_STEPS[Math.max(0, Math.min(BRIGHTNESS_STEPS.length - 1, i))];
     }
 
+    /** A climate's target, in tenths of a degree, one of its steps (half a degree on a Daikin) up or down. */
+    private static int stepTenths(HomeAssistant.Thing t, int tenths, int d) {
+        int step = Math.max(1, Math.round(t.step * 10)), lo = Math.round(t.min * 10), hi = Math.round(t.max * 10);
+        return Math.max(lo, Math.min(hi, Math.round(tenths / (float) step) * step + d * step));
+    }
+
+    /** A climate's slider is its target temperature: only in a mode that has one (a Daikin has none in dry or fan). */
+    private static boolean hasTarget(HomeAssistant.Thing t) {
+        return t.kind == HomeAssistant.CLIMATE && t.on && !Float.isNaN(t.target);
+    }
+
     private HomeAssistant.Thing focusedThing() {
         return zone == Z_SPACES && spaceIndex < spaceItems.size() ? spaceItems.get(spaceIndex) : null;
     }
@@ -4535,10 +4548,10 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         spacesDirty = true;
     }
 
-    /** Holding OK on a dimmable light or a shutter opens its slider. */
+    /** Holding OK on a dimmable light, a shutter or a climate that's heating or cooling opens its slider. */
     private boolean canControl() {
         HomeAssistant.Thing t = tab == TAB_SPACES && controlThing == null ? focusedThing() : null;
-        return t != null && t.available && ((t.kind == HomeAssistant.LIGHT && t.dimmable) || t.kind == HomeAssistant.COVER);
+        return t != null && t.available && ((t.kind == HomeAssistant.LIGHT && t.dimmable) || t.kind == HomeAssistant.COVER || hasTarget(t));
     }
 
     private void holdOk() {
@@ -4553,7 +4566,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         HomeAssistant.Thing t = focusedThing();
         if (t == null) return;
         controlThing = t;
-        controlValue = t.kind == HomeAssistant.COVER ? Math.max(0, t.position) : t.on ? Math.max(1, t.brightness) : 0;
+        controlValue = t.kind == HomeAssistant.CLIMATE ? Math.round(t.target * 10)
+                : t.kind == HomeAssistant.COVER ? Math.max(0, t.position) : t.on ? Math.max(1, t.brightness) : 0;
         control.target = 1;
         aim(spaceFocus, -1, false);
         click.open();
@@ -4581,6 +4595,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         HomeAssistant.Thing t = controlThing;
         if (t == null) return;
         if (t.kind == HomeAssistant.COVER) ha.setPosition(t, controlValue);
+        else if (t.kind == HomeAssistant.CLIMATE) ha.setTarget(t, controlValue / 10f);
         else ha.setBrightness(t, controlValue);
     }
 
@@ -4617,6 +4632,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         if (t != null && cv < 0.01f && t.available) {
             String hint = t.kind == HomeAssistant.COVER ? Ui.tr("Segure OK para ajustar a abertura", "Hold OK to set the position", "Mantén OK para ajustar la apertura")
                     : t.kind == HomeAssistant.LIGHT && t.dimmable ? Ui.tr("Segure OK para ajustar o brilho", "Hold OK to set the brightness", "Mantén OK para ajustar el brillo")
+                    : hasTarget(t) ? Ui.tr("Segure OK para ajustar a temperatura", "Hold OK to set the temperature", "Mantén OK para ajustar la temperatura")
                     : null;
             if (hint != null) c.drawText(hint, MARGIN * k, (SAFE_BOTTOM - 6) * k, lCardMeta);
         }
@@ -4690,7 +4706,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
 
     /**
      * A tile, as in Apple's Home app: a colored circle with the symbol on the left, the name and its state beside it.
-     * On, the tile is bright and the circle takes the thing's color (amber light, blue shutter); off, a quiet dark
+     * On, the tile is bright and the circle takes the thing's color (amber light, blue shutter, a climate its mode's); off, a quiet dark
      * tile. Scenes keep their orange. Focused: it grows and lifts, with the rim the other tabs use.
      */
     private void drawSpaceTile(Canvas c, HomeAssistant.Thing t, RectF base, float f) {
@@ -4710,11 +4726,12 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         tileFill.setColor(lit ? tone(0xFFFFFFFF, 0xFFF2F2F7) : tone(0xB3FFFFFF, 0xFF2C2C2E));
         c.drawRoundRect(cell, r, r, tileFill);
         if (!lit) tileEdge(c, cell, r);
-        int accent = t.kind == HomeAssistant.COVER ? 0xFF0A84FF : scene ? 0xFFFF9F0A : 0xFFFFB340;
+        int accent = t.kind == HomeAssistant.CLIMATE ? modeColor(t.state) : t.kind == HomeAssistant.COVER ? 0xFF0A84FF : scene ? 0xFFFF9F0A : 0xFFFFB340;
         float rad = 32 * k * s, ix = cell.left + (30 * k + 32 * k) * s, iy = cell.centerY();
         tileFill.setColor(lit || scene ? accent : tone(0x14000000, 0x29FFFFFF));
         c.drawCircle(ix, iy, rad, tileFill);
-        String symbol = scene ? "movie" : t.kind == HomeAssistant.COVER ? (lit ? "shades" : "shades_closed") : "lightbulb";
+        String symbol = scene ? "movie" : t.kind == HomeAssistant.COVER ? (lit ? "shades" : "shades_closed")
+                : t.kind == HomeAssistant.CLIMATE ? (lit ? modeSymbol(t.state) : "thermostat") : "lightbulb";
         Symbols.draw(getContext(), c, symbol, ix, iy, 30 * k * s, lit || scene ? WHITE : tone(L_DIM, 0xFFD1D1D6));
         boolean ink = lit || night < 0.5f;
         float tx = ix + rad + 22 * k * s, maxW = cell.right - tx - 22 * k;
@@ -4734,6 +4751,32 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         if (saved >= 0) c.restoreToCount(saved);
     }
 
+    /** As Apple's Home: orange heats, blue cools; cyan dries, teal ventilates, green is automatic. */
+    private static int modeColor(String mode) {
+        switch (mode) {
+            case "heat": return 0xFFFF9F0A;
+            case "cool": return 0xFF0A84FF;
+            case "dry": return 0xFF64D2FF;
+            case "fan_only": return 0xFF40C8E0;
+            default: return 0xFF30D158;
+        }
+    }
+
+    private static String modeSymbol(String mode) {
+        switch (mode) {
+            case "heat": return "heat";
+            case "cool": return "cool";
+            case "dry": return "dry";
+            case "fan_only": return "fan";
+            default: return "auto";
+        }
+    }
+
+    /** "20°", "20.5°". */
+    private static String degrees(float v) {
+        return (v == Math.round(v) ? String.valueOf(Math.round(v)) : String.format(java.util.Locale.ROOT, "%.1f", v)) + "°";
+    }
+
     private static String stateText(HomeAssistant.Thing t) {
         if (!t.available) return Ui.tr("Indisponível", "Unavailable", "No disponible");
         switch (t.kind) {
@@ -4746,6 +4789,19 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                 if (t.position <= 0) return Ui.tr("Fechada", "Closed", "Cerrada");
                 if (t.position >= 100) return Ui.tr("Aberta", "Open", "Abierta");
                 return t.position + Ui.tr("% aberta", "% open", "% abierta");
+            case HomeAssistant.CLIMATE: {
+                String to = Float.isNaN(t.target) ? "" : " " + Ui.tr("a ", "to ", "a ") + degrees(t.target);
+                switch (t.state) {
+                    case "off": return Ui.tr("Desligado", "Off", "Apagado");
+                    case "heat": return Ui.tr("Aquecendo", "Heating", "Calentando") + to;
+                    case "cool": return Ui.tr("Resfriando", "Cooling", "Enfriando") + to;
+                    case "dry": return Ui.tr("Desumidificando", "Dehumidifying", "Deshumidificando");
+                    case "fan_only": return Ui.tr("Ventilação", "Fan", "Ventilador");
+                    case "heat_cool":
+                    case "auto": return Ui.tr("Automático", "Auto", "Automático") + (to.isEmpty() ? "" : " · " + degrees(t.target));
+                    default: return Ui.tr("Ligado", "On", "Encendido");
+                }
+            }
             default:
                 if (!t.on) return Ui.tr("Desligada", "Off", "Apagada");
                 return t.dimmable && t.brightness > 0 ? t.brightness + "%" : Ui.tr("Ligada", "On", "Encendida");
@@ -4769,7 +4825,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         tileFill.setShader(null);
         tileFill.setColor(Ui.alpha(0xFF3A3A3C, v));
         c.drawRoundRect(tmp, r, r, tileFill);
-        float level = controlValue / 100f;
+        boolean climate = t.kind == HomeAssistant.CLIMATE;
+        float level = climate ? Ui.clamp((controlValue / 10f - t.min) / Math.max(0.1f, t.max - t.min)) : controlValue / 100f;
         c.save();
         clip.reset();
         clip.addRoundRect(tmp, r, r, Path.Direction.CW);
@@ -4779,14 +4836,14 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         c.drawRect(cell, tileFill);
         c.restore();
         boolean cover = t.kind == HomeAssistant.COVER;
-        String symbol = cover ? (controlValue > 0 ? "shades" : "shades_closed") : "lightbulb";
+        String symbol = climate ? modeSymbol(t.state) : cover ? (controlValue > 0 ? "shades" : "shades_closed") : "lightbulb";
         boolean underFill = tmp.bottom - 70 * k > tmp.bottom - ph * level;
         Symbols.draw(getContext(), c, symbol, cx, tmp.bottom - 70 * k, 44 * k,
-                Ui.alpha(underFill ? (cover ? 0xFF0A84FF : 0xFFFFB340) : 0xFFD1D1D6, v));
+                Ui.alpha(underFill ? (climate ? modeColor(t.state) : cover ? 0xFF0A84FF : 0xFFFFB340) : 0xFFD1D1D6, v));
         sControlTitle.setColor(Ui.alpha(WHITE, v));
         c.drawText(t.name, cx, tmp.top - 54 * k, sControlTitle);
         sControlValue.setColor(Ui.alpha(WHITE, v));
-        String value = controlValue == 0 ? (cover ? Ui.tr("Fechada", "Closed", "Cerrada") : Ui.tr("Desligada", "Off", "Apagada"))
+        String value = climate ? degrees(controlValue / 10f) : controlValue == 0 ? (cover ? Ui.tr("Fechada", "Closed", "Cerrada") : Ui.tr("Desligada", "Off", "Apagada"))
                 : controlValue + "%";
         c.drawText(value, cx, tmp.bottom + 86 * k, sControlValue);
         lCardMeta.setColor(Ui.alpha(0xFF98989D, v));

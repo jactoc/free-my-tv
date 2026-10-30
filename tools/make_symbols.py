@@ -21,6 +21,8 @@ MAP = {
     "lightbulb": ("lightbulb", 1), "shades": ("roller_shades", 1), "shades_closed": ("roller_shades_closed", 1),
     "movie": ("movie", 1), "thermostat": ("thermostat", 1), "humidity": ("humidity_percentage", 1),
     "window": ("sensor_window", 1), "door": ("sensor_door", 1),
+    "heat": ("mode_heat", 1), "cool": ("mode_cool", 1), "dry": ("water_drop", 1), "fan": ("mode_fan", 1),
+    "auto": ("mode_dual", 1),
 }
 
 

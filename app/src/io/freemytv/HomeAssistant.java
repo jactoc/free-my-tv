@@ -30,7 +30,7 @@ import java.util.concurrent.Executors;
 
 /**
  * Home Assistant for the Spaces tab: its areas (rooms), what can be switched in each (lights, light switches, covers,
- * scripts and scenes) and each room's temperature, humidity and open doors and windows. All of it comes from HA itself:
+ * scripts, scenes and climate: air conditioners, heat pumps) and each room's temperature, humidity and open doors and windows. All of it comes from HA itself:
  * the rooms are HA's areas, so nothing about the house is written here. States are read while the tab shows
  * (`watch`), every few seconds; actions go out at once and show at once (the next reading confirms them).
  * `ha_url` and `ha_token` come from config.properties.
@@ -38,7 +38,7 @@ import java.util.concurrent.Executors;
 final class HomeAssistant {
     interface Listener { void onHome(); }
 
-    static final int LIGHT = 0, SWITCH = 1, COVER = 2, SCRIPT = 3, SCENE = 4;
+    static final int LIGHT = 0, SWITCH = 1, COVER = 2, SCRIPT = 3, SCENE = 4, CLIMATE = 5;
 
     static final class Thing {
         String id, name;
@@ -47,18 +47,21 @@ final class HomeAssistant {
         int brightness = -1;        // 0-100 while on; -1: not dimmable
         boolean dimmable;
         int position = -1;          // a cover's 0 (closed) to 100 (open); -1: unknown
-        String state = "";
+        String state = "";          // a climate's is its mode: off, heat, cool, dry, fan_only, heat_cool, auto
+        float target = Float.NaN;   // a climate's target temperature; NaN: none in this mode (Daikin has none in dry)
+        float min = 16, max = 30, step = 1;
         long holdUntil;             // an action of ours just went out: readings don't undo it before this
     }
 
     static final class Room {
         String id, name;
-        final List<Thing> shortcuts = new ArrayList<>(), lights = new ArrayList<>(), covers = new ArrayList<>();
+        final List<Thing> shortcuts = new ArrayList<>(), lights = new ArrayList<>(), covers = new ArrayList<>(),
+                climates = new ArrayList<>();
         final List<String> sensors = new ArrayList<>(), openings = new ArrayList<>();
         String temperature, humidity;
         final List<String> open = new ArrayList<>();    // the doors and windows open now, by name
 
-        boolean empty() { return shortcuts.isEmpty() && lights.isEmpty() && covers.isEmpty(); }
+        boolean empty() { return shortcuts.isEmpty() && lights.isEmpty() && covers.isEmpty() && climates.isEmpty(); }
     }
 
     private static HomeAssistant instance;
@@ -132,7 +135,7 @@ final class HomeAssistant {
 
     // MARK: - Actions
 
-    /** OK on a thing: a light or switch toggles, a script or scene runs. A cover goes by `setPosition`. */
+    /** OK on a thing: a light, switch or climate toggles, a script or scene runs. A cover goes by `setPosition`. */
     void press(Thing t) {
         switch (t.kind) {
             case LIGHT:
@@ -141,6 +144,12 @@ final class HomeAssistant {
                 t.on = !t.on;
                 if (t.dimmable) t.brightness = t.on ? Math.max(t.brightness, 1) : 0;
                 call(t.kind == LIGHT ? "light" : "switch", t.on ? "turn_on" : "turn_off", t.id, null);
+                break;
+            case CLIMATE:
+                hold(t, 15000);     // Daikin's cloud takes a while to say so
+                t.on = !t.on;
+                t.state = t.on ? "on" : "off";      // on: in the mode it had last, which the next reading tells
+                call("climate", t.on ? "turn_on" : "turn_off", t.id, null);
                 break;
             case SCRIPT:
                 call("script", "turn_on", t.id, null);
@@ -183,8 +192,26 @@ final class HomeAssistant {
         notifyListeners();
     }
 
+    /** A climate's target temperature, within its range. */
+    void setTarget(Thing t, float degrees) {
+        degrees = Math.max(t.min, Math.min(t.max, degrees));
+        hold(t, 15000);
+        t.target = degrees;
+        JSONObject data = new JSONObject();
+        try {
+            data.put("temperature", degrees);
+        } catch (Exception ignored) {
+        }
+        call("climate", "set_temperature", t.id, data);
+        notifyListeners();
+    }
+
     private static void hold(Thing t) {
-        t.holdUntil = SystemClock.elapsedRealtime() + 5000;     // a Shelly cover takes a few seconds to report
+        hold(t, 5000);      // a Shelly cover takes a few seconds to report
+    }
+
+    private static void hold(Thing t, long ms) {
+        t.holdUntil = SystemClock.elapsedRealtime() + ms;
     }
 
     private void call(String domain, String service, String entity, JSONObject data) {
@@ -207,7 +234,7 @@ final class HomeAssistant {
     private void loadStructure() throws Exception {
         Set<String> skip = settingsEntities();
         String template = "[{% for a in areas() %}{\"a\":{{ a|tojson }},\"n\":{{ area_name(a)|tojson }},\"e\":"
-                + "{{ area_entities(a)|select('match','(light|switch|cover|script|scene|sensor|binary_sensor)\\\\.')|list|tojson }}}"
+                + "{{ area_entities(a)|select('match','(light|switch|cover|script|scene|climate|sensor|binary_sensor)\\\\.')|list|tojson }}}"
                 + "{{ ',' if not loop.last }}{% endfor %}]";
         JSONArray areas = new JSONArray(template(template));
         List<Room> out = new ArrayList<>();
@@ -235,8 +262,9 @@ final class HomeAssistant {
                         }
                     }
                     t.kind = domain.equals("light") ? LIGHT : domain.equals("switch") ? SWITCH : domain.equals("cover") ? COVER
-                            : domain.equals("script") ? SCRIPT : SCENE;
-                    (t.kind == COVER ? r.covers : t.kind == SCRIPT || t.kind == SCENE ? r.shortcuts : r.lights).add(t);
+                            : domain.equals("climate") ? CLIMATE : domain.equals("script") ? SCRIPT : SCENE;
+                    (t.kind == COVER ? r.covers : t.kind == CLIMATE ? r.climates : t.kind == SCRIPT || t.kind == SCENE ? r.shortcuts
+                            : r.lights).add(t);
                 }
                 wanted.add(id);
             }
@@ -265,14 +293,17 @@ final class HomeAssistant {
                 + "\"n\":{{ state_attr(e,'friendly_name')|tojson }},\"b\":{{ state_attr(e,'brightness')|tojson }},"
                 + "\"p\":{{ state_attr(e,'current_position')|tojson }},\"c\":{{ state_attr(e,'device_class')|tojson }},"
                 + "\"m\":{{ (state_attr(e,'supported_color_modes') or [])|list|tojson }},"
-                + "\"u\":{{ state_attr(e,'unit_of_measurement')|tojson }}}{{ ',' if not loop.last }}{% endfor %}]";
+                + "\"u\":{{ state_attr(e,'unit_of_measurement')|tojson }}"
+                + "{% if e.startswith('climate.') %},\"t\":{{ state_attr(e,'temperature')|tojson }},"
+                + "\"lo\":{{ state_attr(e,'min_temp')|tojson }},\"hi\":{{ state_attr(e,'max_temp')|tojson }},"
+                + "\"st\":{{ state_attr(e,'target_temp_step')|tojson }}{% endif %}}{{ ',' if not loop.last }}{% endfor %}]";
         JSONArray states = new JSONArray(template(template));
         Map<String, JSONObject> byId = new HashMap<>();
         for (int i = 0; i < states.length(); i++) byId.put(states.getJSONObject(i).getString("i"), states.getJSONObject(i));
         List<Room> list = pending != null ? pending : rooms;
         long now = SystemClock.elapsedRealtime();
         for (Room r : list) {
-            for (List<Thing> group : java.util.Arrays.asList(r.shortcuts, r.lights, r.covers)) {
+            for (List<Thing> group : java.util.Arrays.asList(r.shortcuts, r.lights, r.covers, r.climates)) {
                 for (Thing t : group) {
                     JSONObject o = byId.get(t.id);
                     if (o == null) continue;
@@ -289,16 +320,30 @@ final class HomeAssistant {
                         t.brightness = !t.dimmable ? -1 : t.on && !o.isNull("b") ? Math.max(1, Math.round(o.optInt("b") * 100 / 255f)) : 0;
                     }
                     if (t.kind == COVER) t.position = o.isNull("p") ? (s.equals("closed") ? 0 : s.equals("open") ? 100 : -1) : o.optInt("p");
+                    if (t.kind == CLIMATE) {
+                        t.on = t.available && !s.equals("off");
+                        t.target = o.isNull("t") ? Float.NaN : (float) o.optDouble("t");
+                        t.min = (float) o.optDouble("lo", 16);
+                        t.max = (float) o.optDouble("hi", 30);
+                        t.step = (float) o.optDouble("st", 1);
+                        if (!(t.step > 0)) t.step = 1;
+                    }
                 }
             }
             r.temperature = r.humidity = null;
             r.open.clear();
+            boolean precise = false;
             for (String id : r.sensors) {
                 JSONObject o = byId.get(id);
                 if (o == null) continue;
                 String c = o.optString("c"), s = o.optString("s");
                 if (s.isEmpty() || s.equals("unavailable") || s.equals("unknown")) continue;
-                if (c.equals("temperature") && r.temperature == null) r.temperature = number(s) + "°";
+                // An air conditioner's outdoor unit sits in the room's area too: its reading isn't the room's
+                if (c.equals("temperature") && !(id + " " + o.optString("n")).toLowerCase(Locale.ROOT).contains("outdoor")
+                        && (r.temperature == null || (!precise && s.contains(".")))) {
+                    r.temperature = number(s) + "°";
+                    precise = s.contains(".");      // a room sensor's 20.5 over the split's whole 20 (read at the ceiling)
+                }
                 if (c.equals("humidity") && r.humidity == null) r.humidity = whole(s) + "%";
             }
             for (String id : r.openings) {
@@ -341,15 +386,18 @@ final class HomeAssistant {
 
     /** HA's name without the room's ("Central Light Living Room" in Living Room → "Central Light"). */
     static String clean(String name, String room, int kind) {
-        String out = name;
+        String out = name.replace('\u2019', '\'');     // "Rafi’s room" in a device's name, "Rafi's room" the area's
         if (room != null && !room.isEmpty()) {
-            int at = out.toLowerCase(Locale.ROOT).indexOf(room.toLowerCase(Locale.ROOT));
+            int at = out.toLowerCase(Locale.ROOT).indexOf(room.replace('\u2019', '\'').toLowerCase(Locale.ROOT));
             if (at >= 0) out = out.substring(0, at) + out.substring(at + room.length());
         }
         out = out.replaceAll("\\s+", " ").trim();
+        // Daikin Onecta names its climate after the reading ("Room Temperature"), not the thing
+        if (kind == CLIMATE && out.toLowerCase(Locale.ROOT).contains("temperature")) out = "";
         if (out.startsWith("- ") || out.startsWith(": ")) out = out.substring(2);
         if (!out.isEmpty()) return Character.toUpperCase(out.charAt(0)) + out.substring(1);
         return kind == COVER ? Ui.tr("Persiana", "Shutter", "Persiana") : kind == SCRIPT || kind == SCENE ? "Scene"
+                : kind == CLIMATE ? Ui.tr("Ar-condicionado", "Air conditioner", "Aire acondicionado")
                 : Ui.tr("Luz", "Light", "Luz");
     }
 
