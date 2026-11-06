@@ -46,6 +46,13 @@ final class Backdrop {
     final Bitmap lightImage;            // by day: the background (the lightened frosted version, scaled up on screen)
     final int[] nightFrost, nightGlass; // at night: frosted (the bottom drawer's frosted glass) and glass, darkened
     final Bitmap nightImage;            // at night: the background (the darkened frosted version)
+    /**
+     * Light design: the photo itself, sharp, full screen (the focused title fills the background). Built on demand
+     * for the title in focus only (8 MB of GPU memory each at 1080p): Recs keeps a few and drops the older ones.
+     */
+    volatile Bitmap sharp;
+    /** Where Recs saved the photo (to build `sharp` from). */
+    java.io.File source;
 
     private Backdrop(Bitmap image, int[] frost, int[] glass, Bitmap wide, Bitmap tall, int[] light, int[] lightGlass,
                      int[] night, int[] nightGlass) {
@@ -62,7 +69,8 @@ final class Backdrop {
         nightImage = night == null ? null : Bitmap.createBitmap(night, FW, FH, Bitmap.Config.ARGB_8888);
     }
 
-    static Backdrop make(Bitmap src, boolean forLight) {
+    /** The photo center-cropped to the screen (W × H, mutable); recycles `src`. */
+    private static Bitmap fit(Bitmap src) {
         Bitmap out = Bitmap.createBitmap(W, H, Bitmap.Config.ARGB_8888);
         Canvas c = new Canvas(out);
         Paint photo = new Paint(Paint.FILTER_BITMAP_FLAG | Paint.DITHER_FLAG);
@@ -70,6 +78,17 @@ final class Backdrop {
         float sw = src.getWidth() * scale, sh = src.getHeight() * scale;
         c.drawBitmap(src, null, new RectF((W - sw) / 2, (H - sh) / 2, (W + sw) / 2, (H + sh) / 2), photo);
         src.recycle();
+        return out;
+    }
+
+    /** The full-screen sharp background from the decoded photo (in GPU memory); recycles `src`. */
+    static Bitmap sharp(Bitmap src) {
+        return gpu(fit(src));
+    }
+
+    static Backdrop make(Bitmap src, boolean forLight) {
+        Bitmap out = fit(src);
+        Canvas c = new Canvas(out);
         if (forLight) {
             // Light design: everything comes from the photo without scrims.
             Bitmap wide = card(out, WIDE_W, WIDE_H), tall = null;     // every card is a crop of the wide one

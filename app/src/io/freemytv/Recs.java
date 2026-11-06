@@ -154,6 +154,11 @@ final class Recs {
     private final List<Listener> listeners = new ArrayList<>();
     private final Map<String, Backdrop> images = new LinkedHashMap<>();   // this hour's, built and ready to draw
     private final java.util.Set<String> pending = new java.util.HashSet<>();
+    /** The sharp full-screen backgrounds still held, most recent first (each is 8 MB of GPU memory at 1080p). */
+    private final java.util.ArrayDeque<Backdrop> sharpKept = new java.util.ArrayDeque<>();
+    private static final int SHARP_KEEP = 4;
+    /** Builds them: not queued behind the downloads on `io`, the focused title's background waits on it. */
+    private final ExecutorService sharpIo = Executors.newSingleThreadExecutor();
     private volatile List<Pick> picks = new ArrayList<>();
     private volatile int period = -1;
     private volatile long listAt;
@@ -272,6 +277,173 @@ final class Recs {
             }
         });
         return null;
+    }
+
+    /**
+     * Makes the night background ready: a different photo of the same title (the card already shows its main one),
+     * sharp and full screen, then runs `ready` on the main thread. Without one, the blurred night background stays;
+     * `ready` runs right away when it's already there or there's no saved photo to compare with.
+     */
+    void sharpen(Backdrop b, Pick p, Runnable ready) {
+        if (b.sharp != null || b.source == null) {
+            if (b.sharp != null) keepSharp(b);
+            ready.run();
+            return;
+        }
+        sharpIo.execute(() -> {
+            try {
+                if (b.sharp == null) {
+                    // Without another photo that looks different, none: the card's own would only repeat it.
+                    String url = sceneUrl(p, b.source);
+                    if (!url.isEmpty()) {
+                        File scene = new File(b.source.getParentFile(), "scene-" + Integer.toHexString(url.hashCode()) + ".jpg");
+                        try {
+                            if (!scene.exists()) fetch(url, scene);
+                            Bitmap src = decodeFit(scene);
+                            if (src != null) b.sharp = Backdrop.sharp(src);
+                            //noinspection ResultOfMethodCallIgnored
+                            else scene.delete();
+                        } catch (IOException e) {
+                            AppLog.w("scene \u201c" + p.title + "\u201d: " + e.getMessage());
+                        }
+                    }
+                }
+                if (b.sharp != null) keepSharp(b);
+            } catch (RuntimeException | OutOfMemoryError e) {
+                AppLog.w("sharp background: " + e.getMessage());
+            }
+            main.post(ready);
+        });
+    }
+
+    /** The photo at no less than the screen's size (halved while it stays above it), or null if unreadable. */
+    private static Bitmap decodeFit(File f) {
+        BitmapFactory.Options bounds = new BitmapFactory.Options();
+        bounds.inJustDecodeBounds = true;
+        BitmapFactory.decodeFile(f.getPath(), bounds);
+        if (bounds.outWidth <= 0) return null;
+        BitmapFactory.Options opts = new BitmapFactory.Options();
+        opts.inSampleSize = 1;
+        while (bounds.outWidth / (opts.inSampleSize * 2) >= Backdrop.W
+                && bounds.outHeight / (opts.inSampleSize * 2) >= Backdrop.H) opts.inSampleSize *= 2;
+        return BitmapFactory.decodeFile(f.getPath(), opts);
+    }
+
+    /** The other photo for each card's photo ("" = none), found once per run. */
+    private final Map<String, String> scenes = java.util.Collections.synchronizedMap(new HashMap<>());
+    /** How different (0-255, average per color) another photo must look from the card's to be used. */
+    private static final float SCENE_MIN_DISTANCE = 38;
+    private static final int SCENE_CANDIDATES = 6;
+
+    /**
+     * Another background of the title than the card's, that looks different (new titles often have only the poster
+     * art in a few crops: those don't count). On Plex, among the artworks the server has for it (its show, for an
+     * episode or a season), the one in use being the card's; on TMDB, among its backdrops without text. "" when
+     * there's none (a genre, a title with a single photo, only look-alikes, an error). Network: off the main thread.
+     */
+    private String sceneUrl(Pick p, File card) {
+        if (p == null || p.backdrop == null) return "";
+        String known = scenes.get(p.backdrop);
+        if (known != null) return known;
+        List<String[]> candidates = new ArrayList<>();     // {full size, thumbnail}
+        try {
+            if (p.plexKey != null && plexOn()) {
+                String key = p.showKey != null && !p.showKey.isEmpty() ? p.showKey : p.plexKey;
+                JSONArray arts = plexGet("/library/metadata/" + key + "/arts").optJSONArray("Metadata");
+                int selected = -1;
+                for (int i = 0; arts != null && i < arts.length(); i++) if (arts.getJSONObject(i).optBoolean("selected")) selected = i;
+                int skip = selected >= 0 ? selected : 0;    // the one in use is the card's; with none marked, Plex uses the first
+                for (int i = 0; arts != null && i < arts.length() && candidates.size() < SCENE_CANDIDATES; i++) {
+                    if (i == skip) continue;
+                    String k = arts.getJSONObject(i).optString("key");
+                    if (k.isEmpty()) continue;
+                    String full = k.startsWith("https://image.tmdb.org/t/p/original/") ? IMAGES + k.substring(k.lastIndexOf('/'))
+                            : k.startsWith("/") || k.startsWith("http") ? plexPhoto(k, Backdrop.W, Backdrop.H) : null;
+                    if (full != null) candidates.add(new String[] {full, plexPhoto(k, 160, 90)});
+                }
+            } else if ("movie".equals(p.kind) || "tv".equals(p.kind)) {
+                JSONArray list = get("/" + p.kind + "/" + p.id + "/images?include_image_language=null").optJSONArray("backdrops");
+                for (int i = 0; list != null && i < list.length() && candidates.size() < SCENE_CANDIDATES; i++) {
+                    JSONObject b = list.optJSONObject(i);
+                    String path = b == null ? "" : b.optString("file_path", "");
+                    if (path.isEmpty() || path.equals(p.backdrop) || b.optInt("width") < 1280) continue;
+                    candidates.add(new String[] {IMAGES + path, "https://image.tmdb.org/t/p/w300" + path});
+                }
+            }
+            int[] mine = signature(decodeSmall(card));
+            String url = "";
+            for (String[] c : candidates) {
+                if (mine == null) break;
+                int[] theirs = signature(thumbnail(c[1]));
+                float d = theirs == null ? 0 : distance(mine, theirs);
+                if (d >= SCENE_MIN_DISTANCE) {
+                    url = c[0];
+                    break;
+                }
+            }
+            scenes.put(p.backdrop, url);
+            return url;
+        } catch (Exception e) {
+            AppLog.w("scene \u201c" + p.title + "\u201d: " + (e.getMessage() == null ? e.toString() : e.getMessage()));
+            return "";      // not remembered: tried again next time
+        }
+    }
+
+    /** A small image from the network, decoded (null if unreadable). */
+    private Bitmap thumbnail(String url) throws IOException {
+        HttpURLConnection c = (HttpURLConnection) new URL(url).openConnection();
+        c.setConnectTimeout(6000);
+        c.setReadTimeout(8000);
+        if (plexOn() && url.startsWith(plexBase())) c.setRequestProperty("X-Plex-Token", Config.PLEX_TOKEN.trim());
+        try (InputStream in = c.getInputStream()) {
+            return BitmapFactory.decodeStream(in);
+        } finally {
+            c.disconnect();
+        }
+    }
+
+    private static Bitmap decodeSmall(File f) {
+        if (f == null) return null;
+        BitmapFactory.Options bounds = new BitmapFactory.Options();
+        bounds.inJustDecodeBounds = true;
+        BitmapFactory.decodeFile(f.getPath(), bounds);
+        if (bounds.outWidth <= 0) return null;
+        BitmapFactory.Options opts = new BitmapFactory.Options();
+        opts.inSampleSize = 1;
+        while (bounds.outWidth / (opts.inSampleSize * 2) >= 160) opts.inSampleSize *= 2;
+        return BitmapFactory.decodeFile(f.getPath(), opts);
+    }
+
+    /** The photo as 16 × 9 averaged colors (the composition, not the detail); recycles it. */
+    private static int[] signature(Bitmap b) {
+        if (b == null) return null;
+        Bitmap mid = Bitmap.createScaledBitmap(b, 64, 36, true);
+        Bitmap small = Bitmap.createScaledBitmap(mid, 16, 9, true);
+        int[] px = new int[16 * 9];
+        small.getPixels(px, 0, 16, 0, 0, 16, 9);
+        if (mid != b) mid.recycle();
+        if (small != mid) small.recycle();
+        b.recycle();
+        return px;
+    }
+
+    /** Average difference per color channel (0 = the same, 255 = opposite). */
+    private static float distance(int[] a, int[] b) {
+        long sum = 0;
+        for (int i = 0; i < a.length; i++) {
+            sum += Math.abs(((a[i] >> 16) & 255) - ((b[i] >> 16) & 255))
+                    + Math.abs(((a[i] >> 8) & 255) - ((b[i] >> 8) & 255))
+                    + Math.abs((a[i] & 255) - (b[i] & 255));
+        }
+        return sum / (3f * a.length);
+    }
+
+    private void keepSharp(Backdrop b) {
+        synchronized (sharpKept) {
+            sharpKept.remove(b);
+            sharpKept.addFirst(b);
+            while (sharpKept.size() > SHARP_KEEP) sharpKept.removeLast().sharp = null;     // the GC frees it
+        }
     }
 
     private boolean hasImage(Pick p) {
@@ -1691,7 +1863,7 @@ final class Recs {
         double bestScore = -1;
         for (int i = 0; list != null && i < list.length(); i++) {
             JSONObject b = list.optJSONObject(i);
-            if (b == null || b.optString("file_path", "").isEmpty()) continue;
+            if (b == null || b.optString("file_path", "").isEmpty() ) continue;
             boolean textless = b.isNull("iso_639_1");
             int width = b.optInt("width");
             double score = (textless ? 1e7 : 0) + Math.min(width, 1920) * 100 - Math.max(0, width - 1920) + b.optDouble("vote_average", 0);
@@ -1872,6 +2044,7 @@ final class Recs {
             boolean forLight = light;
             Backdrop backdrop = Backdrop.make(b, forLight);
             if (forLight != light) return;   // the design changed midway: this one is stale
+            backdrop.source = f;
             synchronized (images) {
                 images.put(p.backdrop, backdrop);
                 while (images.size() > (forLight ? 14 : 4)) images.remove(images.keySet().iterator().next());

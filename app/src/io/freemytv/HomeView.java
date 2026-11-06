@@ -159,6 +159,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private final HashMap<String, LinearGradient> appGradients = new HashMap<>();     // the Apps tab's brand cards
     private boolean loadingShown;           // a spinner is on screen: frames keep coming while it turns
     private Paint spinPaint;
+    private LinearGradient photoNight;     // the scrim over the sharp night photo
     private LinearGradient darkFade, tileSheen;     // dark: the background's fade to black, the tiles' light from above
     private List<HomeApps.Item> sheetSaved;  // HDMI Inputs: the inputs in the All Apps sheet, the apps put back after
 
@@ -767,6 +768,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         detailTextKey = "";
         lightGradient = null;
         darkFade = null;
+        photoNight = null;
         buttonPaint = Ui.text(Ui.semibold, 29 * k, INK);
         capsuleText = Ui.numbers(Ui.medium, 29 * k, 0xF2FFFFFF);
         tipPaint = Ui.text(Ui.semibold, 25 * k, 0xF2FFFFFF);
@@ -1091,6 +1093,9 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         boolean want = data.isNight(System.currentTimeMillis());
         if (want == nightTarget) return;
         nightTarget = want;
+        // The background changes kind (blurred by day, the other photo sharp at night): the focused card's again.
+        handler.removeCallbacks(backgroundFollows);
+        handler.post(backgroundFollows);
         if (animate && running) {
             nightFrom = night;
             nightAt = SystemClock.uptimeMillis();
@@ -3416,14 +3421,59 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         heroDirty = true;
     }
 
+    private Recs.Pick focusedCard() {
+        return cards.isEmpty() ? null : cards.get(Math.min(cardIndex, cards.size() - 1));
+    }
+
+    /** The focused card's backdrop (null: no cards, or not built yet). */
+    private Backdrop focusedBackdrop() {
+        Recs.Pick p = focusedCard();
+        return p == null ? null : recs.backdrop(p);
+    }
+
+    /** Dark (the night look): the background is the focused title's other photo, sharp; by day, the soft blurred one. */
+    private boolean sharpLook() {
+        return nightTarget;
+    }
+
+    /**
+     * The focused title fills the background. At night, with another photo of it (the card shows the main one), sharp
+     * and full screen: the swap waits for it (a fraction of a second) so the blurred one never flashes in between.
+     */
     private final Runnable backgroundFollows = new Runnable() {
         @Override public void run() {
-            Backdrop b = cards.isEmpty() ? null : recs.backdrop(cards.get(Math.min(cardIndex, cards.size() - 1)));
-            if (cards.isEmpty() || b != null) showBackdrop(b);
-            heroDirty = true;
-            wake();
+            browseFollowPending = false;
+            if (tab == TAB_APPS || tab == TAB_SPACES) return;
+            if (tab == TAB_BROWSE && !sharpLook()) {
+                showBackdrop(null);     // by day, a calm background: the grid is the picture
+                return;
+            }
+            if (cards.isEmpty()) {
+                showBackdrop(null);
+                heroDirty = true;
+                wake();
+                return;
+            }
+            final Recs.Pick p = focusedCard();
+            final Backdrop b = focusedBackdrop();
+            if (b == null) return;      // still loading: onRecs brings us back
+            if (!sharpLook()) {
+                showBackdrop(b);
+                heroDirty = true;
+                wake();
+                return;
+            }
+            recs.sharpen(b, p, () -> {
+                if (tab == TAB_APPS || tab == TAB_SPACES || focusedBackdrop() != b) return;     // the focus moved on
+                showBackdrop(b);
+                heroDirty = true;
+                sky.invalidate();
+                wake();
+            });
         }
     };
+    private boolean browseFollowPending;
+    private int browseFollowIndex = -1;
 
     private void enterGenre(Recs.Pick genre) {
         browseReturn = cardIndex;
@@ -3520,7 +3570,26 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         if (fading && bgFrom != null) drawLightImage(c, bgFrom, bgTo == null ? 1 - e : 1);
         if (bgTo != null) drawLightImage(c, bgTo, fading ? e : 1);
         imagePaint.setColorFilter(null);
-        if (night > 0.001f) {
+        // How much of the screen is the sharp night photo (against the gradient or a blurred one): its scrim follows it.
+        float photo = (bgTo != null && bgTo.sharp != null ? (fading ? e : 1) : 0)
+                + (fading && bgFrom != null && bgFrom.sharp != null ? (bgTo == null ? 1 - e : 1 - (bgTo.sharp != null ? e : 0)) : 0);
+        photo = Ui.clamp(photo);
+        if (photo > 0.001f && night > 0.001f) {
+            // After Apple TV: the photo shows almost untouched in the middle; a near-black scrim rises behind the tabs
+            // and, stronger, behind the titles and the shelf, where the text is.
+            if (photoNight == null) {
+                photoNight = new LinearGradient(0, 0, 0, h,
+                        new int[] {0xC00B0B0D, 0x9A0B0B0D, 0x420B0B0D, 0x3C0B0B0D, 0xB00B0B0D, 0xD00B0B0D, 0xE60B0B0D},
+                        new float[] {0, 0.13f, 0.24f, 0.5f, 0.6f, 0.75f, 1}, Shader.TileMode.CLAMP);
+            }
+            fill.setColorFilter(null);
+            fill.setShader(photoNight);
+            fill.setAlpha(Math.round(255 * photo * night));
+            c.drawRect(screen, fill);
+            fill.setAlpha(255);
+            fill.setShader(null);
+        }
+        if (night > 0.001f && photo < 0.999f) {
             // Dark, after Apple's HIG: a dimmed base rather than flat black, with the focused title's color passing
             // through (a sense of place): a glow at the top that settles into a faint tint, never quite off, so the
             // dark tiles still sit on something.
@@ -3529,7 +3598,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                         new float[] {0, 0.4f, 0.7f, 1}, Shader.TileMode.CLAMP);
             }
             fill.setShader(darkFade);
-            fill.setAlpha(Math.round(255 * night));
+            fill.setAlpha(Math.round(255 * night * (1 - photo)));
             c.drawRect(screen, fill);
             fill.setAlpha(255);
             fill.setShader(null);
@@ -3537,6 +3606,13 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     }
 
     private void drawLightImage(Canvas c, Backdrop b, float alpha) {
+        Bitmap sharp = b.sharp;
+        if (sharp != null) {
+            // Night: the other photo, sharp. Day ⇄ night: the blurred day version cross-fades with it.
+            if (night < 0.999f) drawImage(c, b.lightImage, alpha);
+            if (night > 0.001f) drawImage(c, sharp, alpha * night);
+            return;
+        }
         if (night < 0.999f || b.nightImage == null) drawImage(c, b.lightImage, alpha);
         if (night > 0.001f) drawImage(c, b.nightImage, alpha * night);
     }
@@ -4097,8 +4173,19 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             recs.tile(cards.get(i));
             if (browseGenre >= 0) recs.details(cards.get(i));
         }
-        handler.removeCallbacks(backgroundFollows);
-        showBackdrop(null);     // a calm background: the grid is the picture
+        // At night the focused tile's photo fills the background once the selection rests on it for a moment (a new
+        // selection restarts the wait; the many refreshes while tiles and details load don't).
+        if (!sharpLook()) {
+            handler.removeCallbacks(backgroundFollows);
+            browseFollowPending = false;
+            browseFollowIndex = -1;
+            showBackdrop(null);     // by day, a calm background: the grid is the picture
+        } else if (cardIndex != browseFollowIndex || !browseFollowPending && focusedBackdrop() != bgTo) {
+            handler.removeCallbacks(backgroundFollows);
+            handler.postDelayed(backgroundFollows, 500);
+            browseFollowPending = true;
+            browseFollowIndex = cardIndex;
+        }
         heroDirty = true;       // the heading, and the "Loading…" note that must go once the tiles are here
         browseDirty = true;
         wake();
