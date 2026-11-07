@@ -251,7 +251,12 @@ final class HomeApps {
         return items;
     }
 
-    private static List<Item> inputs(Context c) {
+    /** Whether the device has HDMI inputs at all (a TV does; a streamer plugged into one doesn't). */
+    static boolean hasInputs(Context c) {
+        return !inputs(c, true).isEmpty();
+    }
+
+        private static List<Item> inputs(Context c) {
         return inputs(c, false);
     }
 

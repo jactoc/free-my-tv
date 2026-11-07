@@ -120,9 +120,10 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
      */
     private static final int TABS_N = 5, TAB_HOME = 0, TAB_DISCOVER = 1, TAB_BROWSE = 2, TAB_APPS = 3, TAB_SPACES = 4;
     // Home: one row of landscape cards under the tabs, the shelf of apps below it.
-    private static final float H_LABEL = 470, H_TOP = 498, H_W = 410, H_H = 231, H_GAP = 40;
-    private static final float H_KICKER = 236, H_TITLE = 320, H_META = 374, H_TEXT_W = 1100;     // the focused title's block
-    private static final int H_VISIBLE = 4;
+    // Home as Discover: the focused title's block, a row of posters (with how far in you are), the apps' dock under it.
+    private static final float H_LABEL = 420, H_TOP = 464, H_W = 217, H_H = 326, H_GAP = 40;
+    private static final float H_KICKER = 222, H_TITLE = 302, H_META = 354, H_TEXT_W = 1100;     // the focused title's block
+    private static final int H_VISIBLE = 6;      // the row scrolls at the next-to-last place: a seventh poster peeks
     private static final int HOME_UP_NEXT = 0, HOME_NEW = 1, HOME_TRENDING = 2;
     // Discover: the carousel, and New on Plex a page further down; the cards layer slides up by D_PAGE to show it, and
     // what goes up passes under an edge just below the filter (D_CLIP).
@@ -205,6 +206,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private final RectF[] topRects = new RectF[TABS_N + 3];
     private final RectF tabBar = new RectF();
     private LinearGradient photoLeft;
+    private final RectF tmpCard = new RectF();
     private int glassTick;     // the glass capsule the tabs sit on (tvOS 26)
     // The carousel: `cardPos` is the (animated) index of the focused card, which is wide while the others are tall, and
     // `cardActive` is 1 while the focus is on the cards (the focused card then grows and lights up).
@@ -222,7 +224,6 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private final Spring newPos = new Spring(0.4f, 0.86f, 0), discoverPage = new Spring(0.3f, 0.86f, 0);
     private final RectF[] otherRects = new RectF[MAX_CARDS];     // the row that isn't focused (cardRects: the focused one)
     private final Rect cardsClip = new Rect();
-    private final RectF homeCell = new RectF();
     private Paint lSection, lTopTab, lTopTabOn, hTitle, hKicker, hMeta;
     private final RectF[] cardRects = new RectF[MAX_CARDS];
     // The detail screen of a pick (OK on a card): poster, description and the button that opens it in its app.
@@ -624,8 +625,13 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     /** The three corner buttons, with their names in the current language. */
     private void makeLightButtons() {
         lightButtons.clear();
-        lightButtons.add(HomeApps.action(HomeApps.LIVE_TV, "live", Ui.tr("TV aberta", "Live TV"), "live_tv"));
-        lightButtons.add(HomeApps.action(HomeApps.INPUTS, "inputs", Ui.tr("Entradas HDMI", "HDMI Inputs"), "hdmi"));
+        // Only what this device has: a streamer (a Chromecast) has neither a tuner nor HDMI inputs of its own.
+        if (HomeApps.liveTv(getContext()) != null) {
+            lightButtons.add(HomeApps.action(HomeApps.LIVE_TV, "live", Ui.tr("TV aberta", "Live TV"), "live_tv"));
+        }
+        if (HomeApps.hasInputs(getContext())) {
+            lightButtons.add(HomeApps.action(HomeApps.INPUTS, "inputs", Ui.tr("Entradas HDMI", "HDMI Inputs"), "hdmi"));
+        }
         lightButtons.add(HomeApps.action(HomeApps.ANDROID_SETTINGS, "tv-settings", Ui.tr("Configurações", "Settings"), "settings"));
     }
 
@@ -3364,7 +3370,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             x = topRects[i].right + gap;
         }
         float b = L_BUTTON * k, right = CONTENT_R * k, cy = L_BUTTON_CY * k;
-        for (int i = 2; i >= 0; i--) {
+        for (int i = TABS_N; i < topRects.length; i++) topRects[i].set(-1, -1, -1, -1);
+        for (int i = lightButtons.size() - 1; i >= 0; i--) {
             topRects[TABS_N + i].set(right - b, cy - b / 2, right, cy + b / 2);
             right -= b + L_BUTTON_GAP * k;
         }
@@ -3441,7 +3448,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         if (tab == TAB_HOME) {
             // The row draws small images (no photos to build for it): the ones in view and a couple ahead.
             int from = Math.max(0, (int) homeScroll.target - 1), to = Math.min(cards.size(), from + H_VISIBLE + 3);
-            for (int i = from; i < to; i++) recs.still(cards.get(i));
+            for (int i = from; i < to; i++) recs.tile(cards.get(i));
             handler.removeCallbacks(backgroundFollows);
             if (settled) backgroundFollows.run();
             else handler.postDelayed(backgroundFollows, 500);
@@ -3996,72 +4003,11 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                 float x = MARGIN * k + (i - scroll) * step;
                 if (i < MAX_CARDS) cardRects[i].set(x, top, x + iw, top + ih);     // for TalkBack
                 if (x > w || x + iw < 0) continue;
-                drawHomeCard(c, cards.get(i), x, top, iw, ih, Ui.clamp(hat(i - sel) * active));
+                tmpCard.set(x, top, x + iw, top + ih);
+                drawPoster(c, cards.get(i), tmpCard, Ui.clamp(hat(i - sel) * active));
             }
         }
         c.restore();
-    }
-
-    /** A Home card: the still, how far in you are, the focus's sheen and rim; the title and details under it. */
-    private void drawHomeCard(Canvas c, Recs.Pick p, float x, float y, float iw, float ih, float f) {
-        float s = 1 + 0.05f * f, cx = x + iw / 2, cy = y + ih / 2 - 6 * k * f, r0 = 18 * k, r = r0 * s;
-        c.save();
-        c.translate(cx, cy);
-        c.scale(s, s);
-        tmp.set(-iw / 2, -ih / 2, iw / 2, ih / 2);
-        tmp.offset(0, (10 + 14 * f) * k);
-        shadowDeep.setColor(Ui.alpha(0xFF000000, tone(0.14f, 0.32f) + tone(0.2f, 0.28f) * f));
-        shadows.drawCached(c, tmp, r0, DEEP_BLUR * k, shadowDeep);
-        c.restore();
-        homeCell.set(cx - iw * s / 2, cy - ih * s / 2, cx + iw * s / 2, cy + ih * s / 2);
-        Bitmap img = recs.still(p);
-        if (img != null) {
-            roundCrop(c, img, homeCell, r);
-        } else {
-            fill.setShader(null);
-            fill.setColor(tone(0xFFDADADF, 0xFF2C2C2E));
-            c.drawRoundRect(homeCell, r, r, fill);
-        }
-        if (p.progress > 0.005f) {
-            float bar = 8 * k * s, inset = 18 * k, by = homeCell.bottom - 18 * k - bar;
-            tmp.set(homeCell.left + inset, by, homeCell.right - inset, by + bar);
-            fill.setShader(null);
-            fill.setColor(0x99000000);
-            c.drawRoundRect(tmp, bar / 2, bar / 2, fill);
-            tmp.right = tmp.left + (homeCell.width() - 2 * inset) * Math.min(1, p.progress);
-            fill.setColor(0xFFFFFFFF);
-            c.drawRoundRect(tmp, bar / 2, bar / 2, fill);
-        }
-        if (f > 0.01f) {
-            if (lightSheen == null) {
-                lightSheen = new LinearGradient(-0.5f, -0.5f, 0, 0.5f, 0x38FFFFFF, 0x00FFFFFF, Shader.TileMode.CLAMP);
-                lightRim = new LinearGradient(0, -0.5f, 0, 0.5f, 0xE6FFFFFF, 0x59FFFFFF, Shader.TileMode.CLAMP);
-            }
-            unitMatrix.setScale(iw, ih);
-            lightSheen.setLocalMatrix(unitMatrix);
-            lightRim.setLocalMatrix(unitMatrix);
-            int alpha = Math.round(255 * f);
-            c.save();
-            c.translate(cx, cy);
-            c.scale(s, s);
-            tmp.set(-iw / 2, -ih / 2, iw / 2, ih / 2);
-            sheen.setShader(lightSheen);
-            sheen.setAlpha(alpha);
-            c.drawRoundRect(tmp, r0, r0, sheen);
-            sheen.setAlpha(255);
-            rim.setShader(lightRim);
-            rim.setAlpha(alpha);
-            rim.setStrokeWidth(2.5f * k / s);
-            c.drawRoundRect(tmp, r0, r0, rim);
-            rim.setStrokeWidth(2.5f * k);
-            rim.setAlpha(255);
-            c.restore();
-        }
-        // Under the card only its name (its details are in the block above); the focused one in full white.
-        int was = lCardMeta.getColor();
-        lCardMeta.setColor(blend(was, tone(L_INK, WHITE), f));
-        c.drawText(fit(p.title, lCardMeta, iw, 1), x, y + ih + (40 + 10 * f) * k, lCardMeta);
-        lCardMeta.setColor(was);
     }
 
     /** The text cut to `width` (in 24 px steps, remembered: the cards' widths change on every frame of the animation). */
@@ -4401,7 +4347,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
      */
     private void drawLightButtons(Canvas c) {
         applyTone();
-        for (int i = 0; i < 3; i++) {
+        for (int i = 0; i < lightButtons.size(); i++) {
             RectF r = topRects[TABS_N + i];
             float f = Ui.clamp(topFocus[TABS_N + i].value), s = 1 + 0.1f * f, rad = r.width() / 2 * s;
             cell.set(r.centerX() - rad, r.centerY() - rad, r.centerX() + rad, r.centerY() + rad);
@@ -4450,7 +4396,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                 if (dx != 0) {
                     int next = topIndex + dx;
                     if (next >= tabCount() && next < TABS_N) next = dx > 0 ? TABS_N : tabCount() - 1;    // past a hidden tab
-                    next = Math.max(picksOn() ? 0 : TABS_N, Math.min(TABS_N + 2, next));
+                    next = Math.max(picksOn() ? 0 : TABS_N, Math.min(TABS_N + lightButtons.size() - 1, next));
                     if (next == topIndex) return true;
                     topIndex = next;
                     if (topIndex < TABS_N) selectTab(topIndex);   // like Apple TV tabs: focusing a tab selects it
