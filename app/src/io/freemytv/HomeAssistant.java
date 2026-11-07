@@ -48,7 +48,7 @@ final class HomeAssistant {
         boolean dimmable;
         int position = -1;          // a cover's 0 (closed) to 100 (open); -1: unknown
         String state = "";          // a climate's is its mode: off, heat, cool, dry, fan_only, heat_cool, auto
-        float target = Float.NaN;   // a climate's target temperature; NaN: none in this mode (Daikin has none in dry)
+        float target = Float.NaN;   // a climate's target temperature; NaN: none in this mode (some air conditioners have none in dry)
         float min = 16, max = 30, step = 1;
         long holdUntil;             // an action of ours just went out: readings don't undo it before this
     }
@@ -146,7 +146,7 @@ final class HomeAssistant {
                 call(t.kind == LIGHT ? "light" : "switch", t.on ? "turn_on" : "turn_off", t.id, null);
                 break;
             case CLIMATE:
-                hold(t, 15000);     // Daikin's cloud takes a while to say so
+                hold(t, 15000);     // a cloud-connected air conditioner takes a while to say so
                 t.on = !t.on;
                 t.state = t.on ? "on" : "off";      // on: in the mode it had last, which the next reading tells
                 call("climate", t.on ? "turn_on" : "turn_off", t.id, null);
@@ -207,7 +207,7 @@ final class HomeAssistant {
     }
 
     private static void hold(Thing t) {
-        hold(t, 5000);      // a Shelly cover takes a few seconds to report
+        hold(t, 5000);      // a cover takes a few seconds to report
     }
 
     private static void hold(Thing t, long ms) {
@@ -386,13 +386,13 @@ final class HomeAssistant {
 
     /** HA's name without the room's ("Central Light Living Room" in Living Room → "Central Light"). */
     static String clean(String name, String room, int kind) {
-        String out = name.replace('\u2019', '\'');     // "Rafi’s room" in a device's name, "Rafi's room" the area's
+        String out = name.replace('\u2019', '\'');     // "Kid’s room" in a device's name, "Kid's room" the area's
         if (room != null && !room.isEmpty()) {
             int at = out.toLowerCase(Locale.ROOT).indexOf(room.replace('\u2019', '\'').toLowerCase(Locale.ROOT));
             if (at >= 0) out = out.substring(0, at) + out.substring(at + room.length());
         }
         out = out.replaceAll("\\s+", " ").trim();
-        // Daikin Onecta names its climate after the reading ("Room Temperature"), not the thing
+        // Some integrations name a climate after the reading ("Room Temperature"), not the thing
         if (kind == CLIMATE && out.toLowerCase(Locale.ROOT).contains("temperature")) out = "";
         if (out.startsWith("- ") || out.startsWith(": ")) out = out.substring(2);
         if (!out.isEmpty()) return Character.toUpperCase(out.charAt(0)) + out.substring(1);

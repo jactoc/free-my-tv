@@ -4591,13 +4591,13 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         return BRIGHTNESS_STEPS[Math.max(0, Math.min(BRIGHTNESS_STEPS.length - 1, i))];
     }
 
-    /** A climate's target, in tenths of a degree, one of its steps (half a degree on a Daikin) up or down. */
+    /** A climate's target, in tenths of a degree, one of its steps (often half a degree) up or down. */
     private static int stepTenths(HomeAssistant.Thing t, int tenths, int d) {
         int step = Math.max(1, Math.round(t.step * 10)), lo = Math.round(t.min * 10), hi = Math.round(t.max * 10);
         return Math.max(lo, Math.min(hi, Math.round(tenths / (float) step) * step + d * step));
     }
 
-    /** A climate's slider is its target temperature: only in a mode that has one (a Daikin has none in dry or fan). */
+    /** A climate's slider is its target temperature: only in a mode that has one (some have none in dry or fan). */
     private static boolean hasTarget(HomeAssistant.Thing t) {
         return t.kind == HomeAssistant.CLIMATE && t.on && !Float.isNaN(t.target);
     }
