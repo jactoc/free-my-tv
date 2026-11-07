@@ -231,7 +231,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private final Spring detail = new Spring(0.34f, 0.9f, 0);
     private boolean detailOpen, detailDirty;
     private Recs.Pick detailPick;
-    private final RectF posterRect = new RectF();
+    private LinearGradient detailLeft, detailBottom;
     // Watch / Trailer / Watchlist: left and right move between them, OK presses the focused one.
     private final RectF[] detailButtons = {new RectF(), new RectF(), new RectF()};
     private final Spring[] btnFocus = {new Spring(0.26f, 0.85f, 1), new Spring(0.26f, 0.85f, 0), new Spring(0.26f, 0.85f, 0)};
@@ -796,7 +796,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         dChip = Ui.text(Ui.semibold, 20 * k, 0xFFFFFFFF);
         gLabel = Ui.text(Ui.displaySemibold, 46 * k, 0xFFFFFFFF);
         gLabel.setShadowLayer(14 * k, 0, 2 * k, 0x99000000);
-        dTitle = Ui.text(Ui.displaySemibold, 64 * k, 0xFFFFFFFF);
+        dTitle = Ui.tracked(Ui.text(Ui.displaySemibold, 76 * k, 0xFFFFFFFF), 76);     // Title 1, as the home screen's title block
         dMeta = Ui.text(Ui.medium, 28 * k, 0xB3FFFFFF);
         dBody = Ui.text(Ui.regular, 31 * k, 0xE6FFFFFF);
         dBodyPaint = new TextPaint(dBody);
@@ -2106,7 +2106,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         detailBtn = p.pkg == null ? 1 : 0;       // Watch is off on a service the TV doesn't have: Trailer first
         aimButtons(true);
         detailDirty = true;
-        recs.poster(p);
+        recs.backdrop(p);      // the title page's background
         recs.lookup(p);     // the trailer and the Plex watchlist state
         retarget(false);
         wake();
@@ -2212,34 +2212,37 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private void drawDetail(Canvas c) {
         Recs.Pick p = detailPick;
         if (p == null) return;
-        c.drawColor(0xE6101012);
-        float left = 150 * k, top = 150 * k;
-        // Poster: 2:3, with a shadow; a gray placeholder until it has loaded (or when the title has none).
-        posterRect.set(left, top, left + 480 * k, top + 720 * k);
-        tmp.set(posterRect);
-        tmp.offset(0, 18 * k);
-        shadowDeep.setColor(0x99000000);
-        shadows.draw(c, tmp, 24 * k, DEEP_BLUR * k, shadowDeep);
-        Bitmap poster = recs.poster(p);
-        if (poster != null) {
-            roundCrop(c, poster, posterRect, 24 * k);
-        } else {
-            fill.setShader(null);
-            fill.setColor(0xFF2C2C2E);
-            c.drawRoundRect(posterRect, 24 * k, 24 * k, fill);
+        // As the Apple TV app's title page: the title's art edge to edge, darkened on the left and at the bottom where
+        // the text and the buttons are; no poster box.
+        c.drawColor(0xFF101012);
+        Backdrop art = recs.backdrop(p);
+        Bitmap photo = art == null ? null : art.sharp != null ? art.sharp : art.image != null ? art.image : art.wide;
+        if (photo != null) drawImage(c, photo, 1);
+        if (detailLeft == null) {
+            detailLeft = new LinearGradient(0, 0, w, 0, new int[] {0xF0101012, 0xB3101012, 0x00101012},
+                    new float[] {0, 0.45f, 0.78f}, Shader.TileMode.CLAMP);
+            detailBottom = new LinearGradient(0, 0, 0, h, new int[] {0x66101012, 0x00101012, 0x00101012, 0xD9101012},
+                    new float[] {0, 0.2f, 0.5f, 1}, Shader.TileMode.CLAMP);
         }
-        float x = posterRect.right + 80 * k, width = 1920 * k - x - 150 * k, y = top + 64 * k;
+        fill.setColor(0xFF000000);
+        fill.setShader(detailLeft);
+        c.drawRect(screen, fill);
+        fill.setShader(detailBottom);
+        c.drawRect(screen, fill);
+        fill.setShader(null);
+        float top = 150 * k;      // the buttons and the cast keep their old places from here
+        float x = MARGIN * k, width = 1040 * k, y = 400 * k;     // the text sits just above the buttons, as Apple's
         // Title, then year · genre · length · service · rating.
         fitPaint.set(dTitle);
         c.drawText(TextUtils.ellipsize(p.title, fitPaint, width, TextUtils.TruncateAt.END).toString(), x, y, dTitle);
-        y += 62 * k;
+        y += 70 * k;
         StringBuilder line = new StringBuilder();
         if (!p.year.isEmpty()) line.append(p.year).append(" · ");
         line.append(p.meta == null ? "" : p.meta);
         if (p.rating > 0) line.append(String.format(java.util.Locale.ROOT, " · ★ %.1f", p.rating));
         fitPaint.set(dMeta);
         c.drawText(TextUtils.ellipsize(line.toString(), fitPaint, width, TextUtils.TruncateAt.END).toString(), x, y, dMeta);
-        y += 54 * k;
+        y += 40 * k;
         // The description, up to 7 lines.
         String body = p.summary == null ? "" : p.summary.trim();
         if (!body.isEmpty()) {
@@ -2247,7 +2250,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             if (detailText == null || !key.equals(detailTextKey)) {
                 detailTextKey = key;
                 detailText = StaticLayout.Builder.obtain(body, 0, body.length(), dBodyPaint, Math.round(width))
-                        .setMaxLines(7).setEllipsize(TextUtils.TruncateAt.END).setLineSpacing(0, 1.18f).build();
+                        .setMaxLines(3).setEllipsize(TextUtils.TruncateAt.END).setLineSpacing(0, 1.18f).build();
             }
             c.save();
             c.translate(x, y - dBodyPaint.getFontMetrics().ascent);
@@ -2257,13 +2260,13 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         if (p.cast != null && !p.cast.isEmpty()) {
             fitPaint.set(dMeta);
             String cast = Ui.tr("Com ", "With ") + p.cast;
-            c.drawText(TextUtils.ellipsize(cast, fitPaint, width, TextUtils.TruncateAt.END).toString(), x, top + 560 * k, dMeta);
+            c.drawText(TextUtils.ellipsize(cast, fitPaint, width, TextUtils.TruncateAt.END).toString(), x, top + 590 * k, dMeta);
         }
         // The buttons: the focused one is a white pill with dark text, the others a faint glass pill with white text.
         String service = Recs.serviceName(p);
         String[] labels = {(p.progress > 0 ? Ui.tr("Reproduzir no ", "Play on ") : Ui.tr("Assistir no ", "Watch on ")) + (service.isEmpty() ? "app" : service), "Trailer",
                 p.watchlisted == 1 ? Ui.tr("Na lista", "In watchlist") : Ui.tr("Minha lista", "Watchlist")};
-        float bh = 100 * k, by = top + 620 * k, bx = x, iconW = 40 * k;
+        float bh = 100 * k, by = top + 650 * k, bx = x, iconW = 40 * k;
         for (int i = 0; i < detailCount(); i++) {
             float f = Ui.clamp(btnFocus[i].value), grow = 1 + 0.04f * f;
             float bw = 48 * k + iconW + 22 * k + dButton.measureText(labels[i]) + 52 * k;
