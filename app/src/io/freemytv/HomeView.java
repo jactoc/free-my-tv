@@ -97,10 +97,11 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     // The tab bar is a 68 px capsule; the cards sit on the 5-column grid (the wide one spans 3).
     // No greeting in this fork: the tabs sit at the top, in line with the round buttons (L_BUTTON_CY), and what's below
     // starts 90 px higher than in the original, with bigger cards.
+    private static final float TAB_INSET = 6;
     private static final float L_TABBAR_TOP = 69, L_TABBAR_H = 68, L_CARDS_TOP = 240, L_CARD_H = 560;
     private static final float L_FILTER_CY = 184;       // the All / Movies / Shows control
     private static final float L_TALL_W = 340, L_CARD_GAP = 40, L_BUTTON = 68, L_BUTTON_GAP = 20, L_BUTTON_CY = 103;
-    private static final float L_PLATTER_TOP = 814, L_TILE_H = 150;
+    private static final float L_PLATTER_TOP = 836, L_TILE_H = 120;
     /** Where the apps' tops are (virtual px): peeking from the bottom edge, and in the Apps tab under the tab bar. */
     /** tvOS's safe area (Apple's HIG): primary content 60 px from the top and bottom, 80 from the sides (MARGIN). */
     private static final float SAFE_BOTTOM = 1020;
@@ -119,8 +120,9 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
      */
     private static final int TABS_N = 5, TAB_HOME = 0, TAB_DISCOVER = 1, TAB_BROWSE = 2, TAB_APPS = 3, TAB_SPACES = 4;
     // Home: one row of landscape cards under the tabs, the shelf of apps below it.
-    private static final float H_LABEL = 192, H_TOP = 232, H_W = 720, H_H = 405, H_GAP = 32;
-    private static final int H_VISIBLE = 2;
+    private static final float H_LABEL = 470, H_TOP = 498, H_W = 410, H_H = 231, H_GAP = 40;
+    private static final float H_KICKER = 236, H_TITLE = 320, H_META = 374, H_TEXT_W = 1100;     // the focused title's block
+    private static final int H_VISIBLE = 4;
     private static final int HOME_UP_NEXT = 0, HOME_NEW = 1, HOME_TRENDING = 2;
     // Discover: the carousel, and New on Plex a page further down; the cards layer slides up by D_PAGE to show it, and
     // what goes up passes under an edge just below the filter (D_CLIP).
@@ -195,6 +197,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private List<Recs.Pick> cards = new ArrayList<>();
     private final Spring[] topFocus = new Spring[TABS_N + 3];
     private final RectF[] topRects = new RectF[TABS_N + 3];
+    private final RectF tabBar = new RectF();
+    private LinearGradient photoLeft;     // the glass capsule the tabs sit on (tvOS 26)
     // The carousel: `cardPos` is the (animated) index of the focused card, which is wide while the others are tall, and
     // `cardActive` is 1 while the focus is on the cards (the focused card then grows and lights up).
     private static final int MAX_CARDS = 48;
@@ -212,7 +216,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     private final RectF[] otherRects = new RectF[MAX_CARDS];     // the row that isn't focused (cardRects: the focused one)
     private final Rect cardsClip = new Rect();
     private final RectF homeCell = new RectF();
-    private Paint lSection, lTopTab, lTopTabOn;
+    private Paint lSection, lTopTab, lTopTabOn, hTitle, hKicker, hMeta;
     private final RectF[] cardRects = new RectF[MAX_CARDS];
     // The detail screen of a pick (OK on a card): poster, description and the button that opens it in its app.
     private final Spring detail = new Spring(0.34f, 0.9f, 0);
@@ -737,6 +741,10 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         lCardTitle = Ui.tracked(Ui.text(Ui.semibold, 31 * k, L_INK), 31);
         lCardMeta = Ui.tracked(Ui.text(Ui.medium, 25 * k, L_DIM), 25);
         lSection = Ui.tracked(Ui.text(Ui.semibold, 31 * k, L_INK), 31);
+        hTitle = Ui.tracked(Ui.text(Ui.displaySemibold, 76 * k, WHITE), 76);     // Title 1
+        hKicker = Ui.text(Ui.semibold, 25 * k, WHITE);                           // Caption 1, capitals
+        hKicker.setLetterSpacing(0.06f);
+        hMeta = Ui.tracked(Ui.text(Ui.medium, 29 * k, WHITE), 29);               // Body
         sName = Ui.tracked(Ui.text(Ui.semibold, 29 * k, L_INK), 29);        // Spaces: Body, emphasized
         sState = Ui.tracked(Ui.text(Ui.medium, 25 * k, L_DIM), 25);         // Caption 1
         sStatus = Ui.tracked(Ui.text(Ui.medium, 29 * k, L_DIM), 29);
@@ -849,6 +857,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         if (heroMoving || heroDirty || heroFading) {
             heroLayer.invalidate();
             cardsLayer.invalidate();
+        } else if (bgFading) {
+            heroLayer.invalidate();     // the tab bar's glass shows the new background
         }
         if (drawerItemsMoving || drawerDirty || bgFading) drawerLayer.invalidate();
         if (gridMoving || gridDirty) sheetLayer.invalidate();
@@ -1160,11 +1170,14 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         lTitle.setColor(tone(L_INK, WHITE));
         lTab.setColor(tone(L_DIM, 0xFF8E8E93));
         lTabOn.setColor(tone(L_INK, WHITE));
-        lTopTab.setColor(tone(L_DIM, 0xFF8E8E93));
+        lTopTab.setColor(tone(0xFF3A3A3C, 0xD9FFFFFF));     // on the glass
         lTopTabOn.setColor(tone(L_INK, WHITE));
         lCardTitle.setColor(tone(L_INK, WHITE));
         lCardMeta.setColor(tone(L_DIM, 0xFF98989D));
         lSection.setColor(tone(L_INK, WHITE));
+        hTitle.setColor(tone(L_INK, WHITE));
+        hKicker.setColor(tone(L_DIM, 0xB3FFFFFF));
+        hMeta.setColor(tone(0xFF3A3A3C, 0xC7FFFFFF));
         lQuote.setColor(tone(L_FAINT, 0xB8FFFFFF));
         lTip.setColor(tone(L_INK, WHITE));
         lDate.setColor(tone(L_DIM, 0xFF98989D));
@@ -1355,11 +1368,11 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         float full = (CONTENT_R - MARGIN) * k;
         // Tiles in the TV banners' own 16:9, so an app's art is never stretched; never taller than L_TILE_H. The glass
         // keeps its bottom edge, so with more apps it only gets lower.
-        float tw = Math.min(L_TILE_H * 16f / 9 * k, (full - Math.max(0, n - 1) * gap) / Math.max(1, n));
+        float tw = Math.min(L_TILE_H * 16f / 9 * k, (full - 3 * pad - Math.max(0, n - 1) * gap) / Math.max(1, n));
         float th = tw * 9f / 16;
-        float width = n * tw + Math.max(0, n - 1) * gap, left = (w - width) / 2f;
+        float left = MARGIN * k + 1.5f * pad;     // room for a focused tile to grow inside the glass
         float top = (L_PLATTER_TOP + L_TILE_H) * k - th;
-        platterRect.set(left - pad, top, left + width + pad, top + th + 2 * pad);
+        platterRect.set(MARGIN * k, top, CONTENT_R * k, top + th + 2 * pad);     // the tvOS dock: one strip, edge to edge
         float x = left, y = top + pad;
         shelfTileTop = y;
         for (int i = 0; i < n; i++) {
@@ -1371,15 +1384,15 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
 
     /** Shelf layer: the glass bar and its shadow (it only changes with the background). */
     private void drawPlatter(Canvas c) {
-        if (shelf.isEmpty() || night > 0.999f) return;     // dark: the tiles float on the black, no glass
+        if (shelf.isEmpty()) return;
         float radius = (TILE_RADIUS + SHELF_PAD) * k;
         tmp.set(platterRect);
         tmp.offset(0, 18 * k);
         shadow.setColor(tone(0x1F000000, 0x52000000));
         shadows.draw(c, tmp, radius, SHADOW_BLUR * k, shadow);
-        // White glass by day; smoked glass at night.
-        scene.liquid(c, platterRect, radius, tone(0xFFFFFFFF, SMOKE), tone(0.42f, 0.12f), tone(0.03f, 0.08f),
-                tone(30, 34) * k, tone(22, 28) * k, tone(0.65f, 0.95f), 1);
+        // The same glass as the tab bar: white by day, smoked at night.
+        scene.liquid(c, platterRect, radius, tone(0xFFFFFFFF, SMOKE), tone(0.55f, 0.5f), tone(0.02f, 0.01f), 12 * k, 8 * k,
+                tone(0.6f, 0.45f), 1);
     }
 
     /** The quotes row's text and sizes, for one set of coins, prices and text size. */
@@ -3315,9 +3328,16 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
 
     private void layoutLight() {
         if (lTab == null) return;
-        // Text tabs; the focus pill extends 26 px past the text (the first tab's text starts at the margin).
-        float pad = 26 * k, tabTop = L_TABBAR_TOP * k, tabBottom = (L_TABBAR_TOP + L_TABBAR_H) * k;
-        float x = MARGIN * k - pad;
+        // tvOS 26: the tabs sit on one glass capsule, centred at the top; each tab is a pill inset in it (the selected
+        // one solid white).
+        float pad = 30 * k, inset = TAB_INSET * k, gap = 4 * k;
+        float tabTop = (L_TABBAR_TOP + TAB_INSET) * k, tabBottom = (L_TABBAR_TOP + L_TABBAR_H - TAB_INSET) * k;
+        float total = 0;
+        for (int i = 0; i < tabCount(); i++) {
+            total += Math.max(lTopTabOn.measureText(tabs()[i]), lTopTab.measureText(tabs()[i])) + 2 * pad + (i > 0 ? gap : 0);
+        }
+        float x = (w - total) / 2;
+        tabBar.set(x - inset, L_TABBAR_TOP * k, x + total + inset, (L_TABBAR_TOP + L_TABBAR_H) * k);
         for (int i = 0; i < TABS_N; i++) {
             if (i >= tabCount()) {                  // Spaces without Home Assistant: no tab
                 topRects[i].set(-1, -1, -1, -1);
@@ -3325,7 +3345,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             }
             float tw = Math.max(lTopTabOn.measureText(tabs()[i]), lTopTab.measureText(tabs()[i]));
             topRects[i].set(x, tabTop, x + tw + 2 * pad, tabBottom);
-            x = topRects[i].right + 16 * k;
+            x = topRects[i].right + gap;
         }
         float b = L_BUTTON * k, right = CONTENT_R * k, cy = L_BUTTON_CY * k;
         for (int i = 2; i >= 0; i--) {
@@ -3536,6 +3556,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         updateCards();
         snapBrowse();
         heroDirty = true;
+        sky.invalidate();       // the scrim behind the title block is Home's and Discover's
     }
 
     /**
@@ -3586,6 +3607,15 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             fill.setShader(photoNight);
             fill.setAlpha(Math.round(255 * photo * night));
             c.drawRect(screen, fill);
+            if (tab == TAB_HOME || tab == TAB_DISCOVER) {
+                // Behind the focused title's block on the left, as in the Apple TV app: the photo stays clear on the right.
+                if (photoLeft == null) {
+                    photoLeft = new LinearGradient(0, 0, w, 0, new int[] {0xC00B0B0D, 0x700B0B0D, 0x000B0B0D},
+                            new float[] {0, 0.42f, 0.7f}, Shader.TileMode.CLAMP);
+                }
+                fill.setShader(photoLeft);
+                c.drawRect(screen, fill);
+            }
             fill.setAlpha(255);
             fill.setShader(null);
         }
@@ -3624,36 +3654,36 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             if (HomeData.coinCount() > 0) drawQuotes(c);
             return;
         }
-        // Text tabs (the selected one in bold, in the main text color); with focus on the tabs, the selected one gets
-        // the white pill with a shadow and grows a little (the tvOS focus).
+        // The glass capsule (the navigation layer, the only glass besides the round buttons and the focus), then the
+        // tabs: the selected one is always the solid white pill; with focus on the tabs it grows and lifts.
         float focus = Ui.clamp(topFocus[tab].value);
+        float br = tabBar.height() / 2;
+        tmp.set(tabBar);
+        tmp.offset(0, 6 * k);
+        shadow.setColor(Ui.alpha(0xFF000000, tone(0.1f, 0.3f)));
+        shadows.draw(c, tmp, br, SHADOW_BLUR * k, shadow);
+        scene.liquid(c, tabBar, br, tone(0xFFFFFFFF, SMOKE), tone(0.55f, 0.5f), tone(0.02f, 0.01f), 12 * k, 8 * k,
+                tone(0.6f, 0.45f), 1);
         for (int i = 0; i < tabCount(); i++) {
             RectF r = topRects[i];
-            if (i == tab && focus < 0.99f) {
-                float rr = r.height() / 2;
-                fill.setShader(null);
-                fill.setColor(Ui.alpha(tone(0xFF000000, 0xFFFFFFFF), tone(0.06f, 0.12f) * (1 - focus)));
-                c.drawRoundRect(r, rr, rr, fill);
-            }
-            if (i == tab && focus > 0.01f) {
+            if (i == tab) {
                 float s = 1 + 0.05f * focus;
                 cell.set(r.centerX() - r.width() * s / 2, r.centerY() - r.height() * s / 2,
                         r.centerX() + r.width() * s / 2, r.centerY() + r.height() * s / 2);
                 float rr = cell.height() / 2;
-                if (focus > 0.01f) {
-                    tmp.set(cell);
-                    tmp.offset(0, 8 * k * focus);
-                    shadow.setColor(Ui.alpha(0xFF000000, tone(0.22f, 0.4f) * focus));
-                    shadows.draw(c, tmp, rr, SHADOW_BLUR * k, shadow);
-                }
+                tmp.set(cell);
+                tmp.offset(0, (3 + 6 * focus) * k);
+                shadow.setColor(Ui.alpha(0xFF000000, tone(0.12f, 0.25f) + tone(0.12f, 0.2f) * focus));
+                shadows.draw(c, tmp, rr, SHADOW_BLUR * k, shadow);
                 fill.setShader(null);
-                fill.setColor(Ui.alpha(0xFFFFFFFF, focus));
+                fill.setColor(0xFFFFFFFF);
                 c.drawRoundRect(cell, rr, rr, fill);
             }
             Paint p = i == tab ? lTopTabOn : lTopTab;
-            if (i == tab) lTopTabOn.setColor(blend(tone(L_INK, WHITE), L_INK, focus));   // always dark on the white pill
+            if (i == tab) lTopTabOn.setColor(L_INK);     // dark on the white pill
             c.drawText(tabs()[i], r.centerX() - p.measureText(tabs()[i]) / 2, r.centerY() + Ui.halfCap(p), p);
         }
+        lTopTabOn.setColor(tone(L_INK, WHITE));
         if (tab == TAB_DISCOVER || tab == TAB_BROWSE) drawFilter(c);
         if (tab == TAB_BROWSE && browseGenre >= 0) {    // the genre that's open, right after the filter, on its row
             c.drawText(browseName, filterRects[2].right + 40 * k, L_FILTER_CY * k + Ui.halfCap(lTopTabOn), lTopTabOn);
@@ -3922,9 +3952,17 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             drawSpinner(c, MARGIN * k + 22 * k, (H_TOP + 40) * k);
             return;
         }
-        c.drawText(homeSource == HOME_UP_NEXT ? Ui.tr("Continuar assistindo", "Up Next", "Seguir viendo")
+        String section = homeSource == HOME_UP_NEXT ? Ui.tr("Continuar assistindo", "Up Next", "Seguir viendo")
                 : homeSource == HOME_NEW ? Ui.tr("Comece algo novo", "Start something new", "Empieza algo nuevo")
-                : Ui.tr("Em alta agora", "Trending now", "Tendencias de ahora"), MARGIN * k, H_LABEL * k, lSection);
+                : Ui.tr("Em alta agora", "Trending now", "Tendencias de ahora");
+        // The focused title, large, over its artwork (the Apple TV hero): where it's from, its name, its details.
+        Recs.Pick hp = cards.get(Math.max(0, Math.min(cards.size() - 1, cardIndex)));
+        float tx = MARGIN * k, tw = H_TEXT_W * k;
+        String from = hp.app == null || hp.app.isEmpty() ? section : section + "  \u00B7  " + hp.app;
+        c.drawText(fit(from.toUpperCase(java.util.Locale.getDefault()), hKicker, tw, 5), tx, H_KICKER * k, hKicker);
+        c.drawText(fit(hp.title, hTitle, tw, 3), tx, H_TITLE * k, hTitle);
+        if (hp.meta != null && !hp.meta.isEmpty()) c.drawText(fit(hp.meta, hMeta, tw, 4), tx, H_META * k, hMeta);
+        c.drawText(section, MARGIN * k, H_LABEL * k, lSection);
         float iw = H_W * k, ih = H_H * k, step = iw + H_GAP * k, top = H_TOP * k;
         float scroll = homeScroll.value, sel = homeSel.value, active = cardActive.value;
         int focused = Math.round(sel);
@@ -3997,8 +4035,11 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             rim.setAlpha(255);
             c.restore();
         }
-        c.drawText(fit(p.title, lCardTitle, iw, 0), x, y + ih + 44 * k, lCardTitle);
-        if (p.meta != null && !p.meta.isEmpty()) c.drawText(fit(p.meta, lCardMeta, iw, 1), x, y + ih + 78 * k, lCardMeta);
+        // Under the card only its name (its details are in the block above); the focused one in full white.
+        int was = lCardMeta.getColor();
+        lCardMeta.setColor(blend(was, tone(L_INK, WHITE), f));
+        c.drawText(fit(p.title, lCardMeta, iw, 1), x, y + ih + (40 + 10 * f) * k, lCardMeta);
+        lCardMeta.setColor(was);
     }
 
     /** The text cut to `width` (in 24 px steps, remembered: the cards' widths change on every frame of the animation). */
@@ -4009,7 +4050,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         String[][] row = fitted.get(text);
         if (row == null) {
             if (fitted.size() > 400) fitted.clear();
-            row = new String[3][64];
+            row = new String[6][64];     // one per paint and use: 0-2 cards, 3-5 Home's title block
             fitted.put(text, row);
         }
         step = Math.min(step, 63);
