@@ -120,10 +120,11 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
      */
     private static final int TABS_N = 5, TAB_HOME = 0, TAB_DISCOVER = 1, TAB_BROWSE = 2, TAB_APPS = 3, TAB_SPACES = 4;
     // Home: one row of landscape cards under the tabs, the shelf of apps below it.
-    // Home as Discover: the focused title's block, a row of posters (with how far in you are), the apps' dock under it.
-    private static final float H_LABEL = 420, H_TOP = 464, H_W = 217, H_H = 326, H_GAP = 40;
-    private static final float H_KICKER = 222, H_TITLE = 302, H_META = 354, H_TEXT_W = 1100;     // the focused title's block
-    private static final int H_VISIBLE = 6;      // the row scrolls at the next-to-last place: a seventh poster peeks
+    // Home: the focused title's block, Up Next as landscape cards (each episode's own picture, how far in you are; Apple
+    // keeps Up Next landscape and posters for browsing), the apps' dock under it. Spaced as Discover's rows.
+    private static final float H_LABEL = 470, H_TOP = 512, H_W = 410, H_H = 231, H_GAP = 40;
+    private static final float H_KICKER = 236, H_TITLE = 318, H_META = 372, H_TEXT_W = 1100;     // the focused title's block
+    private static final int H_VISIBLE = 4;      // HIG 4-column width: four cards fill the row edge to edge
     private static final int HOME_UP_NEXT = 0, HOME_NEW = 1, HOME_TRENDING = 2;
     // Discover: the carousel, and New on Plex a page further down; the cards layer slides up by D_PAGE to show it, and
     // what goes up passes under an edge just below the filter (D_CLIP).
@@ -455,6 +456,12 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         handler.postDelayed(reloadSoon, 500);
     }
 
+    private final Runnable continueAgain = new Runnable() {
+        @Override public void run() {
+            if (running) recs.refreshContinueNow();
+        }
+    };
+
     private final Runnable tick = new Runnable() {
         @Override public void run() {
             if (!running) return;
@@ -553,6 +560,11 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         data.refreshIfStale();
         recs.refreshIfStale();
         recs.refreshContinueNow();      // coming back from watching something: its progress has moved
+        // ...and again a little later: Plex's server records the end of what you watched a few seconds after the app
+        // stops, so the first answer can still list it (and Watch would play the episode you've just finished).
+        handler.removeCallbacks(continueAgain);
+        handler.postDelayed(continueAgain, 8_000);
+        handler.postDelayed(continueAgain, 30_000);
         recs.refreshNew();
         if (tvInputs != null) tvInputs.registerCallback(inputCallback, handler);
         handler.postDelayed(tick, 15_000);
@@ -2126,7 +2138,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             return;
         }
         click.open();
-        HomeApps.Item it = HomeApps.app(p.pkg, Recs.serviceName(p), p.link);
+        HomeApps.Item it = watchItem(p);
         RectF r = detailButtons[0];
         boolean opened = HomeApps.open(activity, it, this, Math.round(r.left), Math.round(r.top), Math.round(r.width()), Math.round(r.height()));
         if (!opened) showToast(Ui.tr("Não deu para abrir ", "Couldn't open ") + it.label + ".");
@@ -2874,7 +2886,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         } else if (zone == Z_HERO) {
             Recs.Pick p = currentPick();
             if (p == null || p.pkg == null) return;
-            it = HomeApps.app(p.pkg, Recs.serviceName(p), p.link);
+            it = watchItem(p);
             r = heroButton;
         } else if (zone == Z_STATUS) {
             if (statusItems.isEmpty()) return;
@@ -3348,6 +3360,16 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
 
     // MARK: - Light design: title, tabs, cards and icon-only buttons
 
+    /**
+     * What Watch opens. Plex in a task of its own: brought back from the background, the Plex app shows the screen it
+     * was on and can ignore the new title's address, so it played the wrong thing.
+     */
+    private static HomeApps.Item watchItem(Recs.Pick p) {
+        HomeApps.Item it = HomeApps.app(p.pkg, Recs.serviceName(p), p.link);
+        if ("plex".equals(p.app) && p.link != null) it.freshTask = true;
+        return it;
+    }
+
     private void layoutLight() {
         if (lTab == null) return;
         // tvOS 26: the tabs sit on one glass capsule, centred at the top; each tab is a pill inset in it (the selected
@@ -3448,7 +3470,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         if (tab == TAB_HOME) {
             // The row draws small images (no photos to build for it): the ones in view and a couple ahead.
             int from = Math.max(0, (int) homeScroll.target - 1), to = Math.min(cards.size(), from + H_VISIBLE + 3);
-            for (int i = from; i < to; i++) recs.tile(cards.get(i));
+            for (int i = from; i < to; i++) recs.still(cards.get(i));
             handler.removeCallbacks(backgroundFollows);
             if (settled) backgroundFollows.run();
             else handler.postDelayed(backgroundFollows, 500);
@@ -3772,8 +3794,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         int front = n == 0 ? -1 : Math.max(0, Math.min(n - 1, Math.round(pos)));
         c.save();
         c.clipRect(MARGIN * k - 36 * k, 0, w, (top + P_H + 80) * k);
-        for (int i = 0; i < n; i++) if (i != front && rects[i].right > 0 && rects[i].left < w) drawPoster(c, list.get(i), rects[i], hat(i - pos) * active);
-        if (front >= 0) drawPoster(c, list.get(front), rects[front], hat(front - pos) * active);
+        for (int i = 0; i < n; i++) if (i != front && rects[i].right > 0 && rects[i].left < w) drawPoster(c, list.get(i), rects[i], hat(i - pos) * active, false);
+        if (front >= 0) drawPoster(c, list.get(front), rects[front], hat(front - pos) * active, false);
         c.restore();
     }
 
@@ -3813,8 +3835,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
     }
 
     /** A poster in a Discover row: the art (or, without a poster, the photo cropped), the progress, the glass focus. */
-    private void drawPoster(Canvas c, Recs.Pick p, RectF base, float v) {
-        float f = Ui.clamp(v), s = 1 + 0.1f * v, bw = base.width(), bh = base.height(), r0 = 16 * k;
+    private void drawPoster(Canvas c, Recs.Pick p, RectF base, float v, boolean landscape) {
+        float f = Ui.clamp(v), s = 1 + (landscape ? 0.06f : 0.1f) * v, bw = base.width(), bh = base.height(), r0 = 16 * k;
         float cx = base.centerX(), cy = base.centerY() - 6 * k * v;
         cell.set(cx - bw * s / 2, cy - bh * s / 2, cx + bw * s / 2, cy + bh * s / 2);
         float r = r0 * s;
@@ -3826,7 +3848,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         shadowDeep.setColor(Ui.alpha(0xFF000000, tone(0.14f, 0.32f) + tone(0.2f, 0.3f) * f));
         shadows.drawCached(c, tmp, r0, DEEP_BLUR * k, shadowDeep);
         c.restore();
-        Bitmap img = p == null ? null : recs.tile(p);
+        Bitmap img = p == null ? null : landscape ? recs.still(p) : recs.tile(p);
         if (img == null && p != null) {
             Backdrop b = recs.backdrop(p);
             img = b == null ? null : b.wide;
@@ -4004,7 +4026,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                 if (i < MAX_CARDS) cardRects[i].set(x, top, x + iw, top + ih);     // for TalkBack
                 if (x > w || x + iw < 0) continue;
                 tmpCard.set(x, top, x + iw, top + ih);
-                drawPoster(c, cards.get(i), tmpCard, Ui.clamp(hat(i - sel) * active));
+                drawPoster(c, cards.get(i), tmpCard, Ui.clamp(hat(i - sel) * active), true);
             }
         }
         c.restore();
