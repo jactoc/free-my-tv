@@ -882,7 +882,6 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         // they rise; the drawer is drawn resting in place; the glass shelf is redrawn once the drawer stops, so the
         // glass shows the background where it ended up.
         if (tilesMoving || tilesDirty) tiles.invalidate();
-        if (statusMoving || statusDirty || bgFading) status.invalidate();
         if (heroMoving || heroDirty || heroFading) {
             heroLayer.invalidate();
             cardsLayer.invalidate();
@@ -891,6 +890,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         // on every frame cost the Chromecast most of its frame time.
         boolean glassNow = (bgFading && (bgFadeAt == 0 || ++glassTick % 6 == 0)) || nightMoving;
         if (glassNow) tabGlass.invalidate();
+        if (statusMoving || statusDirty || glassNow) status.invalidate();     // the round buttons are glass too
         if (drawerItemsMoving || drawerDirty || bgFading) drawerLayer.invalidate();
         if (gridMoving || gridDirty) sheetLayer.invalidate();
         if (detailOpen && (detailMoving || detailDirty)) detailLayer.invalidate();
@@ -1559,7 +1559,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         tmp.set(-bw / 2, -bh / 2, bw / 2, bh / 2);
         tmp.offset(0, (4 + 14 * f + 6 * l) * k);
         shadowDeep.setColor(Ui.alpha(0xFF000000, tone(0.14f, 0.3f) + tone(0.18f, 0.3f) * fc + 0.14f * Ui.clamp(l)));
-        shadows.draw(c, tmp, r0, DEEP_BLUR * k, shadowDeep);
+        shadows.drawCached(c, tmp, r0, DEEP_BLUR * k, shadowDeep);     // the dock's tiles redraw as the focus moves: no live blur
         c.restore();
         int[] style = TILE_STYLE.get(it.key);
         if (it.logo != null && style != null) {
@@ -4100,7 +4100,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                     tmp.set(cell);
                     tmp.offset(0, 7 * k * focus);
                     shadow.setColor(Ui.alpha(0xFF000000, tone(0.2f, 0.4f) * focus));
-                    shadows.draw(c, tmp, cell.height() / 2, SHADOW_BLUR * k, shadow);
+                    shadows.drawCached(c, tmp, cell.height() / 2, SHADOW_BLUR * k, shadow);
                 }
                 fill.setColor(blend(tone(0xFFFFFFFF, 0x40FFFFFF), 0xFFFFFFFF, focus));
                 c.drawRoundRect(cell, cell.height() / 2, cell.height() / 2, fill);
@@ -4779,7 +4779,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
                     tmp.set(cell);
                     tmp.offset(0, 7 * k * focus);
                     shadow.setColor(Ui.alpha(0xFF000000, tone(0.2f, 0.4f) * focus));
-                    shadows.draw(c, tmp, cell.height() / 2, SHADOW_BLUR * k, shadow);
+                    shadows.drawCached(c, tmp, cell.height() / 2, SHADOW_BLUR * k, shadow);
                 }
                 fill.setColor(blend(tone(0xFFFFFFFF, 0x40FFFFFF), 0xFFFFFFFF, focus));
                 c.drawRoundRect(cell, cell.height() / 2, cell.height() / 2, fill);
