@@ -1595,7 +1595,8 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         } else {
             if (it.tile != null) roundImage(c, it.tile, cell, r);
         }
-        tileEdge(c, cell, r);
+        if (fc > 0.01f) glassFocus(c, cx, cy, bw, bh, r0, s, fc);     // tvOS 26: a focused icon catches the light like glass
+        else tileEdge(c, cell, r);
     }
 
     /**
@@ -2410,10 +2411,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             c.drawRoundRect(cell, r, r, tileFill);
         }
         if (fc > 0.01f) {
-            rim.setShader(null);
-            rim.setColor(Ui.alpha(0xFFFFFFFF, 0.6f * fc));
-            rim.setStrokeWidth(2.5f * k);
-            c.drawRoundRect(cell, r, r, rim);
+            glassFocus(c, cx, cy, bw, bh, r0, s, fc);
         } else {
             tileEdge(c, cell, r);
         }
@@ -4085,9 +4083,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         for (String label : labels) total += lTab.measureText(label) + 2 * pad;
         float left = MARGIN * k - 26 * k, focus = Ui.clamp(filterFocus.value);
         tmp.set(left, cy - height / 2, left + total, cy + height / 2);
-        fill.setShader(null);
-        fill.setColor(tone(0x14000000, 0x26FFFFFF));
-        c.drawRoundRect(tmp, height / 2, height / 2, fill);
+        segmentedTrack(c, tmp);
         float x = left + inset;
         int selected = browseKindIndex();
         for (int i = 0; i < 3; i++) {
@@ -4096,20 +4092,34 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             if (i == selected) {
                 float scale = 1 + 0.06f * focus;
                 cell.set(filterRects[i].centerX() - width * scale / 2, cy - segment * scale / 2, filterRects[i].centerX() + width * scale / 2, cy + segment * scale / 2);
-                if (focus > 0.01f) {
-                    tmp.set(cell);
-                    tmp.offset(0, 7 * k * focus);
-                    shadow.setColor(Ui.alpha(0xFF000000, tone(0.2f, 0.4f) * focus));
-                    shadows.drawCached(c, tmp, cell.height() / 2, SHADOW_BLUR * k, shadow);
-                }
-                fill.setColor(blend(tone(0xFFFFFFFF, 0x40FFFFFF), 0xFFFFFFFF, focus));
+                tmp.set(cell);
+                tmp.offset(0, (3 + 5 * focus) * k);
+                shadow.setColor(Ui.alpha(0xFF000000, tone(0.1f, 0.22f) + tone(0.1f, 0.18f) * focus));
+                shadows.drawCached(c, tmp, cell.height() / 2, SHADOW_BLUR * k, shadow);
+                fill.setColor(0xFFFFFFFF);      // the chosen one is solid white, as the selected tab
                 c.drawRoundRect(cell, cell.height() / 2, cell.height() / 2, fill);
             }
             Paint paint = i == selected ? lTabOn : lTab;
-            if (i == selected) lTabOn.setColor(blend(tone(L_INK, WHITE), L_INK, focus));
+            if (i == selected) lTabOn.setColor(L_INK);
             c.drawText(labels[i], filterRects[i].centerX() - paint.measureText(labels[i]) / 2, cy + Ui.halfCap(paint), paint);
             x += width;
         }
+    }
+
+    /**
+     * The capsule of a segmented control (the filter, the rooms): navigation, so it looks like the glass tab bar, but
+     * drawn cheaply (a translucent fill and a lit edge): its layer redraws while the focus moves and with every reading.
+     */
+    private void segmentedTrack(Canvas c, RectF r) {
+        float rr = r.height() / 2;
+        fill.setShader(null);
+        fill.setColor(tone(0x1F000000, 0x30FFFFFF));
+        c.drawRoundRect(r, rr, rr, fill);
+        rim.setShader(null);
+        rim.setColor(tone(0x14000000, 0x3DFFFFFF));
+        rim.setStrokeWidth(1.5f * k);
+        c.drawRoundRect(r, rr, rr, rim);
+        rim.setStrokeWidth(2.5f * k);
     }
 
     private boolean moveFilter(int dx, int dy) {
@@ -4764,9 +4774,7 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         for (int i = 0; i < n; i++) total += lTab.measureText(rooms.get(i).name) + 2 * pad;
         float left = MARGIN * k - 26 * k, focus = Ui.clamp(roomFocus.value);
         tmp.set(left, cy - height / 2, left + total, cy + height / 2);
-        fill.setShader(null);
-        fill.setColor(tone(0x14000000, 0x26FFFFFF));
-        c.drawRoundRect(tmp, height / 2, height / 2, fill);
+        segmentedTrack(c, tmp);
         float x = left + inset;
         for (int i = 0; i < n; i++) {
             String label = rooms.get(i).name;
@@ -4775,17 +4783,15 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
             if (i == roomIndex) {
                 float scale = 1 + 0.06f * focus;
                 cell.set(roomRects[i].centerX() - width * scale / 2, cy - segment * scale / 2, roomRects[i].centerX() + width * scale / 2, cy + segment * scale / 2);
-                if (focus > 0.01f) {
-                    tmp.set(cell);
-                    tmp.offset(0, 7 * k * focus);
-                    shadow.setColor(Ui.alpha(0xFF000000, tone(0.2f, 0.4f) * focus));
-                    shadows.drawCached(c, tmp, cell.height() / 2, SHADOW_BLUR * k, shadow);
-                }
-                fill.setColor(blend(tone(0xFFFFFFFF, 0x40FFFFFF), 0xFFFFFFFF, focus));
+                tmp.set(cell);
+                tmp.offset(0, (3 + 5 * focus) * k);
+                shadow.setColor(Ui.alpha(0xFF000000, tone(0.1f, 0.22f) + tone(0.1f, 0.18f) * focus));
+                shadows.drawCached(c, tmp, cell.height() / 2, SHADOW_BLUR * k, shadow);
+                fill.setColor(0xFFFFFFFF);      // the chosen one is solid white, as the selected tab
                 c.drawRoundRect(cell, cell.height() / 2, cell.height() / 2, fill);
             }
             Paint paint = i == roomIndex ? lTabOn : lTab;
-            if (i == roomIndex) lTabOn.setColor(blend(tone(L_INK, WHITE), L_INK, focus));
+            if (i == roomIndex) lTabOn.setColor(L_INK);
             c.drawText(label, roomRects[i].centerX() - paint.measureText(label) / 2, cy + Ui.halfCap(paint), paint);
             x += width;
         }
@@ -4860,11 +4866,13 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         c.drawText(fit(t.name, sName, maxW / s, 2), tx, iy - 6 * k, sName);
         c.drawText(stateText(t), tx, iy + 30 * k, sState);
         c.restore();
-        if (fc > 0.01f) {
+        if (fc > 0.01f && lit) {        // a lit tile is white: a dark rim; the glass would not show on it
             rim.setShader(null);
-            rim.setColor(Ui.alpha(lit ? 0xFF000000 : 0xFFFFFFFF, (lit ? 0.12f : 0.6f) * fc));
+            rim.setColor(Ui.alpha(0xFF000000, 0.12f * fc));
             rim.setStrokeWidth(2.5f * k);
             c.drawRoundRect(cell, r, r, rim);
+        } else if (fc > 0.01f) {
+            glassFocus(c, cx, cy, bw, bh, r0, s, fc);
         }
         if (saved >= 0) c.restoreToCount(saved);
     }
@@ -4941,8 +4949,13 @@ final class HomeView extends ViewGroup implements Choreographer.FrameCallback, H
         tmp.set(cx - pw / 2, cy - ph / 2, cx + pw / 2, cy + ph / 2);
         float r = pw / 2 * 0.62f;
         tileFill.setShader(null);
-        tileFill.setColor(Ui.alpha(0xFF3A3A3C, v));
+        tileFill.setColor(Ui.alpha(0x47FFFFFF, v));     // glass while in use, as Apple's sliders
         c.drawRoundRect(tmp, r, r, tileFill);
+        rim.setShader(null);
+        rim.setColor(Ui.alpha(0x59FFFFFF, v));
+        rim.setStrokeWidth(1.5f * k);
+        c.drawRoundRect(tmp, r, r, rim);
+        rim.setStrokeWidth(2.5f * k);
         boolean climate = t.kind == HomeAssistant.CLIMATE;
         float level = climate ? Ui.clamp((controlValue / 10f - t.min) / Math.max(0.1f, t.max - t.min)) : controlValue / 100f;
         c.save();
